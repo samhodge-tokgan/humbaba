@@ -9,8 +9,17 @@ run through **ONNX Runtime** with the **CoreML execution provider** on Apple Sil
 - **Acceleration:** ONNX Runtime CoreML EP (Apple Neural Engine / GPU / CPU).
 - **Host tested:** [Natron](https://www.natrongithub.com/) on an Apple M1.
 
-> Status: **early development.** See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) and the
-> milestone roadmap below. Built as a series of incremental PRs.
+> Status: **working end-to-end** on Apple Silicon (ACEScg → CoreML depth → decimeter Z).
+> See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), packaging in
+> [`packaging/README.md`](packaging/README.md), and the milestone roadmap below.
+
+## Install
+
+Grab the `.pkg` from the [Releases](../../releases) page (or build one — see
+[`packaging/README.md`](packaging/README.md)) and install it; the bundle lands in
+`/Library/OFX/Plugins` with the model included, and appears in your OFX host under
+**TokGan › Depth Anything 3**. The build is ad-hoc signed (not yet notarized) — see the
+packaging doc for the Gatekeeper note.
 
 ## Why
 

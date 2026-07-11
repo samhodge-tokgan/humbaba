@@ -22,6 +22,11 @@
 #include <string>
 #include <vector>
 
+#if DA3_WITH_ONNX && defined(__APPLE__)
+#include <dlfcn.h>
+#include <sys/stat.h>
+#endif
+
 #include "ofxsImageEffect.h"
 #include "ofxsMultiThread.h"
 #include "ofxsProcessing.H"
@@ -153,12 +158,31 @@ class DepthAnything3Plugin : public OFX::ImageEffect {
 
 #if DA3_WITH_ONNX
 
+// Locate DA3METRIC-LARGE.onnx inside the plugin bundle's Contents/Resources, by
+// finding this binary's own path via dladdr.
+static std::string bundleModelPath() {
+#if defined(__APPLE__)
+  Dl_info info;
+  if (dladdr(reinterpret_cast<const void*>(&bundleModelPath), &info) && info.dli_fname) {
+    std::string p(info.dli_fname);  // .../Contents/MacOS/DepthAnything3.ofx
+    const std::string marker = "/Contents/MacOS/";
+    auto pos = p.rfind(marker);
+    if (pos != std::string::npos) {
+      std::string cand = p.substr(0, pos) + "/Contents/Resources/DA3METRIC-LARGE.onnx";
+      struct stat st;
+      if (stat(cand.c_str(), &st) == 0) return cand;
+    }
+  }
+#endif
+  return std::string();
+}
+
 std::string DepthAnything3Plugin::resolveModelPath() {
   std::string p;
   _modelFile->getValue(p);
   if (!p.empty()) return p;
   if (const char* env = std::getenv("DA3_MODEL_PATH")) return std::string(env);
-  return std::string();
+  return bundleModelPath();  // bundled model (release build)
 }
 
 bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
