@@ -1,0 +1,10 @@
+# Python deps for the model->ONNX pipeline (CPU). The DA3 package itself is
+# installed separately in CI via: git clone + `pip install -e .` (it pulls torch,
+# xformers, einops, safetensors, huggingface_hub, etc. per its pyproject).
+# These are the extra ONNX-side tools layered on top.
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy<2
+onnx>=1.15
+onnxruntime>=1.17
+onnxconverter-common>=1.14
+pillow

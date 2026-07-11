@@ -13,7 +13,7 @@ Primary development + test target: **Apple Silicon (M1), macOS 26.x**, inference
 | OpenFX API + Support lib | `AcademySoftwareFoundation/openfx` **v1.5.x** | vendored in M2 |
 | ONNX Runtime | **1.20.x** (arm64/universal, CoreML EP) | verify `GetAvailableProviders()` lists CoreML |
 | Model | `depth-anything/DA3METRIC-LARGE` | Apache-2.0, ViT-L, patch 14 |
-| Natron (test host) | **arm64/universal** build from `NatronGitHub/Natron` releases | installed Natron 2.5.0 is x86_64-only |
+| Natron (test host) | **arm64** RB-2.6 build at `/Applications/Natron-2.6-arm64.app` | native Apple Silicon; x86_64 Natron 2.5.0 kept alongside |
 | CMake | ≥ 3.20 (installed 4.4.0) | |
 | Python | ≥ 3.10 (miniconda 3.13 present) | model export/validation only |
 
@@ -62,6 +62,22 @@ git config --local url."https://github.com/samhodge-tokgan/".insteadOf "https://
 Each milestone (M0–M5) is one branch → PR → self-review → merge to `main`. Every PR that changes
 plugin runtime behavior is exercised end-to-end before merge (build, load in Natron, inspect
 output). See the roadmap table in the README.
+
+## Headless testing (Natron)
+
+The native arm64 build ships `NatronRenderer` (and `natron-python`) for GUI-less
+verification, which we drive from CI and local checks:
+
+- Point Natron at the built plugin without a system install via **`OFX_PLUGIN_PATH`**
+  (see the [Natron environment reference](https://natron.readthedocs.io/en/rb-2.5/_environment.html)).
+- Build a graph procedurally (`Read → DepthAnything3 → Write`) as a **`.ntp`** project or a Python
+  script and render it headlessly (see
+  [Natron execution docs](https://natron.readthedocs.io/en/rb-2.5/devel/natronexecution.html)),
+  e.g. `NatronRenderer -w Write1 1-1 project.ntp` or `NatronRenderer -t script.py`.
+- Diff the rendered depth output against a reference to gate plugin changes (wired up in M2/M3).
+
+Note: the arm64 Natron is unsigned; on first launch it may need a Gatekeeper allow
+(`xattr -dr com.apple.quarantine /Applications/Natron-2.6-arm64.app` if it was quarantined).
 
 ## Color pipeline (design intent)
 
