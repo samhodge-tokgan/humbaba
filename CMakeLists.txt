@@ -102,6 +102,8 @@ if(DA3_WITH_ONNX)
     src/DepthEngine.cpp
     src/MoGeEngine.cpp
     src/MoGePlugin.cpp
+    src/LensModel.cpp
+    src/LensDistortionPlugin.cpp
   )
   target_link_libraries(DepthAnything3 PRIVATE onnxruntime)
   target_compile_definitions(DepthAnything3 PRIVATE DA3_WITH_ONNX=1)
