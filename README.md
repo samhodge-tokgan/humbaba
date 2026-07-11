@@ -50,20 +50,27 @@ because it is not ONNX-representable).
 Apple's unified memory and the CoreML EP expose **no VRAM byte-limit API** (that is a CUDA-only
 ONNX Runtime option). The plugin's "maximum resources" control therefore governs cost through:
 
-- **Compute units** — `ALL` / `CPU+GPU` / `CPU+ANE` / `CPU only` (`MLComputeUnits`).
-- **Thread caps** — intra/inter-op thread counts.
-- **Processing resolution & tiling** — smaller inference resolution, or overlapping tiles with
-  scale/shift alignment and feathered blending, to bound peak memory.
+- **Compute units** — `All` / `CPU+GPU` / `CPU+ANE` / `CPU only` (`MLComputeUnits`).
+- **Max threads** — the ONNX Runtime intra-op thread cap.
+- **Processing (long side)** — the inference resolution (aspect preserved, rounded to a multiple of
+  14). This is the primary memory/speed lever, made possible by the **dynamic-resolution ONNX
+  model** (one graph runs at any resolution — see `tools/export_onnx.py`).
+- **Auto resolution from memory budget** — when enabled, a *Memory budget (MB)* maps to a
+  processing resolution (an approximate calibration, since CoreML has no hard cap).
+
+Note: the dynamic model trades some CoreML node coverage (more ops fall back to CPU) for
+resolution flexibility, so it can be slower than a fixed-resolution export at the same size.
+Image **sequences** are supported; the inference session is cached across frames.
 
 ### Operational notes (important)
 
 - **Model file:** the ONNX model is selected by the *Model file* parameter, or the
   `DA3_MODEL_PATH` environment variable (the release build bundles it in `Contents/Resources`).
   Build it with `tools/export_onnx.py` or download the CI artifact.
-- **Fixed processing resolution:** the exported model is traced at a fixed resolution (default
-  **504×504**) because the DINOv2 positional embedding is baked at trace time. The plugin's
-  *Processing resolution* must match the model's export resolution. (Multi-resolution support is a
-  M4 concern.)
+- **Dynamic resolution:** the model is exported with the **dynamo** exporter so one ONNX graph runs
+  at any resolution (H, W multiples of 14). The plugin feeds an aspect-preserving resolution derived
+  from the *Processing (long side)* / memory-budget controls. (A legacy fixed-resolution export is
+  available via `export_onnx.py --static`.)
 - **Depth is data, not color:** the output is float metric depth, not an image. In your host, read
   the source with its correct colorspace (the plugin does ACEScg→sRGB internally) and write the
   depth output through a **raw/data** colorspace so the values are not tone-mapped or clamped.

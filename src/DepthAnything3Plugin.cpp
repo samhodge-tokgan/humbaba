@@ -41,7 +41,9 @@
 
 #define kParamModelFile "modelFile"
 #define kParamComputeUnits "computeUnits"
-#define kParamProcRes "procResolution"
+#define kParamLongSide "procLongSide"
+#define kParamAutoRes "autoResolution"
+#define kParamMemBudget "memBudgetMB"
 #define kParamThreads "intraThreads"
 #define kParamGain "depthGain"
 #define kParamInputACEScg "inputIsACEScg"
@@ -62,6 +64,17 @@ static inline void acescgToSrgb(float r, float g, float b, float* out) {
   out[0] = srgbEncode(lr);
   out[1] = srgbEncode(lg);
   out[2] = srgbEncode(lb);
+}
+
+// Map an approximate memory budget (MB) to a processing long-side resolution.
+// CoreML exposes no VRAM cap, so on Apple Silicon the effective memory lever is
+// the inference resolution. This is a calibrated approximation (documented as such).
+static inline int budgetToLongSide(int mb) {
+  double L = 7.9 * std::sqrt(static_cast<double>(mb < 64 ? 64 : mb));
+  int v = static_cast<int>(std::lround(L));
+  if (v < 140) v = 140;
+  if (v > 1540) v = 1540;
+  return v;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -103,7 +116,9 @@ class DepthAnything3Plugin : public OFX::ImageEffect {
   OFX::Clip* _srcClip;
   OFX::StringParam* _modelFile;
   OFX::ChoiceParam* _computeUnits;
-  OFX::IntParam* _procRes;
+  OFX::IntParam* _longSide;
+  OFX::BooleanParam* _autoRes;
+  OFX::IntParam* _memBudget;
   OFX::IntParam* _threads;
   OFX::DoubleParam* _gain;
   OFX::BooleanParam* _inputACEScg;
@@ -114,7 +129,9 @@ class DepthAnything3Plugin : public OFX::ImageEffect {
     _srcClip = fetchClip(kOfxImageEffectSimpleSourceClipName);
     _modelFile = fetchStringParam(kParamModelFile);
     _computeUnits = fetchChoiceParam(kParamComputeUnits);
-    _procRes = fetchIntParam(kParamProcRes);
+    _longSide = fetchIntParam(kParamLongSide);
+    _autoRes = fetchBooleanParam(kParamAutoRes);
+    _memBudget = fetchIntParam(kParamMemBudget);
     _threads = fetchIntParam(kParamThreads);
     _gain = fetchDoubleParam(kParamGain);
     _inputACEScg = fetchBooleanParam(kParamInputACEScg);
@@ -164,18 +181,35 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
     return false;
   }
 
-  int procRes = 504;
-  _procRes->getValue(procRes);
   int threads = 0;
   _threads->getValue(threads);
   int cu = 0;
   _computeUnits->getValue(cu);
   const da3::ComputeUnits units = static_cast<da3::ComputeUnits>(cu);
 
+  // Resolution: either an explicit long side, or derived from a memory budget.
+  bool autoRes = false;
+  _autoRes->getValue(autoRes);
+  int longSide = 504;
+  if (autoRes) {
+    int mb = 4096;
+    _memBudget->getValue(mb);
+    longSide = budgetToLongSide(mb);
+  } else {
+    _longSide->getValue(longSide);
+  }
+  // Aspect-preserving processing resolution (multiples of 14). The dynamic ONNX
+  // model runs at any such resolution.
+  const int mx = std::max(W, H);
+  const double s = static_cast<double>(longSide) / static_cast<double>(mx);
+  const int pw = da3::RoundToMultiple(std::max(14, static_cast<int>(std::lround(W * s))), 14);
+  const int ph = da3::RoundToMultiple(std::max(14, static_cast<int>(std::lround(H * s))), 14);
+
   const std::string key = modelPath + "|" + std::to_string(cu) + "|" +
-                          std::to_string(threads) + "|" + std::to_string(procRes);
+                          std::to_string(threads) + "|" + std::to_string(pw) + "x" +
+                          std::to_string(ph);
   if (!_engine || key != _engineKey) {
-    _engine = std::make_unique<da3::DepthEngine>(modelPath, units, threads, procRes, procRes);
+    _engine = std::make_unique<da3::DepthEngine>(modelPath, units, threads, pw, ph);
     _engineKey = key;
     if (!_engine->last_error().empty()) {
       setPersistentMessage(OFX::Message::eMessageError, "", _engine->last_error());
@@ -345,9 +379,27 @@ void DepthAnything3Factory::describeInContext(OFX::ImageEffectDescriptor& desc,
     page->addChild(*p);
   }
   {
-    IntParamDescriptor* p = desc.defineIntParam(kParamProcRes);
-    p->setLabel("Processing resolution");
-    p->setHint("Model inference resolution (rounded to a multiple of 14). Lower = less memory.");
+    BooleanParamDescriptor* p = desc.defineBooleanParam(kParamAutoRes);
+    p->setLabel("Auto resolution from memory budget");
+    p->setHint("Derive the processing resolution from the memory budget below.");
+    p->setDefault(false);
+    page->addChild(*p);
+  }
+  {
+    IntParamDescriptor* p = desc.defineIntParam(kParamMemBudget);
+    p->setLabel("Memory budget (MB)");
+    p->setHint("Approximate resource budget; maps to a processing resolution. "
+               "CoreML has no VRAM cap, so on Apple Silicon resolution is the memory lever.");
+    p->setRange(256, 65536);
+    p->setDisplayRange(1024, 16384);
+    p->setDefault(4096);
+    page->addChild(*p);
+  }
+  {
+    IntParamDescriptor* p = desc.defineIntParam(kParamLongSide);
+    p->setLabel("Processing (long side)");
+    p->setHint("Longest side of the inference resolution, aspect preserved and rounded to a "
+               "multiple of 14. Lower = less memory/faster. Used unless Auto resolution is on.");
     p->setRange(140, 1540);
     p->setDisplayRange(224, 1036);
     p->setDefault(504);
