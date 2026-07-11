@@ -73,5 +73,31 @@ Natron versions and full local setup instructions.
 
 ## Building
 
-Requires CMake ≥ 3.20, a C++17 compiler (Apple clang), and (for the model pipeline) Python ≥ 3.10.
-Build instructions land with milestone **M2**. Until then see the development guide.
+Requires CMake ≥ 3.20 and a C++17 compiler (Apple clang). The OpenFX SDK is fetched
+automatically by CMake (`FetchContent`, pinned to OFX 1.5.1).
+
+```sh
+# Universal arm64+x86_64 bundle (default). Use -DDA3_UNIVERSAL=OFF for host-arch only.
+cmake -S . -B build -DDA3_UNIVERSAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# Result: build/DepthAnything3.ofx.bundle
+# Install into the user OFX dir (override with -DOFX_INSTALL_DIR=...):
+cmake --build build --target install-local
+```
+
+### Testing in Natron (headless)
+
+```sh
+# NOTE: this Natron build does not scan ~/Library/OFX/Plugins by default — point it there.
+OFX_PLUGIN_PATH="$HOME/Library/OFX/Plugins" \
+  /Applications/Natron-2.6-arm64.app/Contents/MacOS/NatronRenderer \
+  --clear-openfx-cache -t tests/natron/check_plugin.py < /dev/null   # discovery -> RESULT: PASS
+
+# Full Read -> DepthAnything3 -> Write render:
+python3 tests/natron/make_test_image.py test-assets/synthetic_test.png
+DA3_INPUT=$PWD/test-assets/synthetic_test.png DA3_OUTPUT=$PWD/build/test/out.png \
+  OFX_PLUGIN_PATH="$HOME/Library/OFX/Plugins" \
+  /Applications/Natron-2.6-arm64.app/Contents/MacOS/NatronRenderer \
+  --clear-openfx-cache -t tests/natron/render_passthrough.py < /dev/null
+```
