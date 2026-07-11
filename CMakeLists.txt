@@ -104,6 +104,7 @@ if(DA3_WITH_ONNX)
     src/MoGePlugin.cpp
     src/LensModel.cpp
     src/LensDistortionPlugin.cpp
+    src/AnyCalibEngine.cpp
   )
   target_link_libraries(DepthAnything3 PRIVATE onnxruntime)
   target_compile_definitions(DepthAnything3 PRIVATE DA3_WITH_ONNX=1)
@@ -170,6 +171,17 @@ if(DA3_WITH_ONNX AND DA3_MOGE_MODEL_FILE)
     COMMAND ${CMAKE_COMMAND} -E copy "${DA3_MOGE_MODEL_FILE}"
             "${BUNDLE_DIR}/Contents/Resources/moge-2-vitb.onnx"
     COMMENT "Bundling MoGe model into Resources"
+    VERBATIM
+  )
+endif()
+
+# Optionally bundle the AnyCalib model (for the Lens Distortion estimator).
+if(DA3_WITH_ONNX AND DA3_ANYCALIB_MODEL_FILE)
+  add_custom_command(TARGET DepthAnything3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_DIR}/Contents/Resources"
+    COMMAND ${CMAKE_COMMAND} -E copy "${DA3_ANYCALIB_MODEL_FILE}"
+            "${BUNDLE_DIR}/Contents/Resources/anycalib_dist.onnx"
+    COMMENT "Bundling AnyCalib model into Resources"
     VERBATIM
   )
 endif()

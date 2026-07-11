@@ -25,8 +25,35 @@
 #include "ofxsImageEffect.h"
 #include "ofxsMultiThread.h"
 
+#include "AnyCalibEngine.h"
 #include "LensModel.h"
 #include "Register.h"
+
+static inline float ld_srgb(float c) {
+  c = std::min(std::max(c, 0.0f), 1.0f);
+  return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+}
+static inline void ld_acescgToSrgb(float r, float g, float b, float* o) {
+  float lr = 1.70505f * r - 0.62179f * g - 0.08326f * b;
+  float lg = -0.13026f * r + 1.14080f * g - 0.01055f * b;
+  float lb = -0.02400f * r - 0.12897f * g + 1.15297f * b;
+  o[0] = ld_srgb(lr); o[1] = ld_srgb(lg); o[2] = ld_srgb(lb);
+}
+static std::string ld_bundleModel() {
+#if defined(__APPLE__)
+  Dl_info info;
+  if (dladdr(reinterpret_cast<const void*>(&ld_bundleModel), &info) && info.dli_fname) {
+    std::string p(info.dli_fname);
+    auto pos = p.rfind("/Contents/MacOS/");
+    if (pos != std::string::npos) {
+      std::string cand = p.substr(0, pos) + "/Contents/Resources/anycalib_dist.onnx";
+      struct stat st;
+      if (stat(cand.c_str(), &st) == 0) return cand;
+    }
+  }
+#endif
+  return std::string();
+}
 
 #define kLdName "Lens Distortion"
 #define kLdGrouping "TokGan"
@@ -43,6 +70,7 @@
 #define kLdFocal "focalPx"
 #define kLdSamples "boundarySamples"
 #define kLdModelFile "ldModelFile"
+#define kLdACEScg "ldInputIsACEScg"
 #define kLdEstimate "ldEstimate"
 #define kLdOverL "overscanLeft"
 #define kLdOverR "overscanRight"
@@ -63,6 +91,7 @@ class LensDistortionPlugin : public OFX::ImageEffect {
   OFX::DoubleParam *_k1, *_k2, *_k3, *_p1, *_p2, *_focal;
   OFX::IntParam* _samples;
   OFX::StringParam* _modelFile;
+  OFX::BooleanParam* _acescg;
   OFX::DoubleParam *_oL, *_oR, *_oT, *_oB, *_oPx, *_oPy;
   OFX::DoubleParam *_c2, *_c4, *_u1, *_v1;
 
@@ -74,6 +103,7 @@ class LensDistortionPlugin : public OFX::ImageEffect {
     _p1 = fetchDoubleParam(kLdP1); _p2 = fetchDoubleParam(kLdP2); _focal = fetchDoubleParam(kLdFocal);
     _samples = fetchIntParam(kLdSamples);
     _modelFile = fetchStringParam(kLdModelFile);
+    _acescg = fetchBooleanParam(kLdACEScg);
     _oL = fetchDoubleParam(kLdOverL); _oR = fetchDoubleParam(kLdOverR);
     _oT = fetchDoubleParam(kLdOverT); _oB = fetchDoubleParam(kLdOverB);
     _oPx = fetchDoubleParam(kLdOverPctX); _oPy = fetchDoubleParam(kLdOverPctY);
@@ -119,27 +149,65 @@ void LensDistortionPlugin::recompute(double time) {
 }
 
 void LensDistortionPlugin::estimate(double time) {
-  // Optional ML estimation hook. No distortion model is bundled by default (the
-  // strong single-image models need a host-side solver or training), so this looks
-  // for an ONNX and reports if absent. The expected model is feed-forward, output
-  // a vector [k1,k2,p1,p2,k3] (Deep-BrownConrady style).
-  std::string p;
-  _modelFile->getValue(p);
-  if (p.empty()) {
-    if (const char* e = std::getenv("LENS_MODEL_PATH")) p = e;
+  // ML estimation via AnyCalib (DINOv2 field net in ONNX + host-side camera fit).
+  std::string model;
+  _modelFile->getValue(model);
+  if (model.empty()) {
+    if (const char* e = std::getenv("ANYCALIB_MODEL_PATH")) model = e;
   }
-  struct stat st;
-  if (p.empty() || stat(p.c_str(), &st) != 0) {
+  if (model.empty()) model = ld_bundleModel();
+  if (model.empty()) {
     setPersistentMessage(OFX::Message::eMessageMessage, "",
-                         "No lens-distortion ML model available. Set the distortion parameters "
-                         "manually (or from a sidecar); overscan and 3DE outputs update live.");
+                         "No AnyCalib model available. Set parameters manually (or a sidecar); "
+                         "overscan and 3DE outputs update live.");
     return;
   }
-  // A model was provided; running it is delegated to a future estimator engine.
-  setPersistentMessage(OFX::Message::eMessageMessage, "",
-                       "A model path is set, but the ML estimator engine is not enabled in this "
-                       "build. Parameters remain manual.");
-  (void)time;
+
+  std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(time));
+  if (!src.get() || src->getPixelDepth() != OFX::eBitDepthFloat) {
+    setPersistentMessage(OFX::Message::eMessageError, "", "AnyCalib needs a float source image.");
+    return;
+  }
+  const OfxRectI rod = src->getRegionOfDefinition();
+  const int W = rod.x2 - rod.x1, H = rod.y2 - rod.y1;
+  const int nc = src->getPixelComponents() == OFX::ePixelComponentRGBA ? 4 : 1;
+  if (W <= 0 || H <= 0 || nc < 3) {
+    setPersistentMessage(OFX::Message::eMessageError, "", "AnyCalib needs an RGB(A) float image.");
+    return;
+  }
+  bool acescg = true;
+  _acescg->getValue(acescg);
+  std::vector<float> rgb(static_cast<size_t>(W) * H * 3);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const float* s = static_cast<const float*>(src->getPixelAddress(rod.x1 + x, rod.y1 + y));
+      float* d = rgb.data() + (static_cast<size_t>(y) * W + x) * 3;
+      if (!s) { d[0] = d[1] = d[2] = 0; continue; }
+      if (acescg) ld_acescgToSrgb(s[0], s[1], s[2], d);
+      else { d[0] = std::min(std::max(s[0], 0.f), 1.f);
+             d[1] = std::min(std::max(s[1], 0.f), 1.f);
+             d[2] = std::min(std::max(s[2], 0.f), 1.f); }
+    }
+
+  da3::AnyCalibEngine eng(model, da3::ComputeUnits::All, 0);
+  if (!eng.last_error().empty()) {
+    setPersistentMessage(OFX::Message::eMessageError, "", eng.last_error());
+    return;
+  }
+  da3::CameraFit fit = eng.Estimate(rgb.data(), W, H);
+  if (!fit.ok) {
+    setPersistentMessage(OFX::Message::eMessageError, "",
+                         eng.last_error().empty() ? "AnyCalib fit failed" : eng.last_error());
+    return;
+  }
+  clearPersistentMessage();
+  // AnyCalib's radial maps directly to OpenCV: fx,fy,cx,cy,k1,k2 (k3=p1=p2=0).
+  _focal->setValue(0.5 * (fit.fx + fit.fy));
+  _k1->setValue(fit.k1); _k2->setValue(fit.k2); _k3->setValue(0.0);
+  _p1->setValue(0.0); _p2->setValue(0.0);
+  sendMessage(OFX::Message::eMessageMessage, "",
+              "AnyCalib: fx=" + std::to_string(fit.fx) + " k1=" + std::to_string(fit.k1) +
+              " k2=" + std::to_string(fit.k2));
 }
 
 void LensDistortionPlugin::render(const OFX::RenderArguments& args) {
@@ -234,15 +302,23 @@ void LensDistortionFactory::describeInContext(OFX::ImageEffectDescriptor& desc, 
   }
   {
     StringParamDescriptor* p = desc.defineStringParam(kLdModelFile);
-    p->setLabel("ML model (optional)");
-    p->setHint("Optional ONNX lens-distortion estimator. If empty, set parameters manually.");
+    p->setLabel("AnyCalib model (optional)");
+    p->setHint("AnyCalib ONNX estimator. Empty = use the bundled model / $ANYCALIB_MODEL_PATH, "
+               "else set distortion parameters manually.");
     p->setStringType(eStringTypeFilePath);
     page->addChild(*p);
   }
   {
+    BooleanParamDescriptor* p = desc.defineBooleanParam(kLdACEScg);
+    p->setLabel("Input is ACEScg");
+    p->setHint("Convert ACEScg to sRGB before the ML estimate.");
+    p->setDefault(true);
+    page->addChild(*p);
+  }
+  {
     PushButtonParamDescriptor* p = desc.definePushButtonParam(kLdEstimate);
-    p->setLabel("Estimate (ML) / Recompute");
-    p->setHint("Run the ML estimator if a model is set, then recompute overscan + 3DE outputs.");
+    p->setLabel("Estimate (AnyCalib) / Recompute");
+    p->setHint("Run AnyCalib on the current frame (fills k1,k2,focal), then recompute overscan + 3DE.");
     page->addChild(*p);
   }
   auto out = [&](const char* n, const char* label, const char* hint) {
