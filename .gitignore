@@ -1,0 +1,62 @@
+# ---- Build output ----
+build/
+cmake-build-*/
+out/
+dist/
+*.o
+*.obj
+*.a
+*.dylib
+*.so
+*.ofx
+*.ofx.bundle/
+!packaging/**/*.ofx.bundle/   # keep any templated bundle skeletons if added under packaging/
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+_deps/
+
+# ---- Model weights & inference artifacts (never commit; pulled from HF / CI artifacts) ----
+*.onnx
+*.onnx_data
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.mlmodel
+*.mlmodelc/
+*.mlpackage/
+models/
+weights/
+.model-cache/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Test media (large; fetched by scripts) ----
+test-assets/**/*.exr
+test-assets/**/*.png
+test-assets/**/*.jpg
+test-assets/**/*.tif
+test-assets/**/*.tiff
+test-assets/**/*.mov
+test-assets/**/*.dpx
+!test-assets/**/*.md
+!test-assets/**/manifest.*
+
+# ---- macOS / editors ----
+.DS_Store
+*.dSYM/
+.idea/
+.vscode/
+*.swp
