@@ -33,6 +33,7 @@
 
 #if DA3_WITH_ONNX
 #include "DepthEngine.h"
+#include "Register.h"
 #endif
 
 #define kPluginName "Depth Anything 3"
@@ -459,6 +460,9 @@ namespace Plugin {
 void getPluginIDs(OFX::PluginFactoryArray& ids) {
   static DepthAnything3Factory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
   ids.push_back(&p);
+#if DA3_WITH_ONNX
+  da3reg::appendMoGe(ids);  // second plugin in the same bundle
+#endif
 }
 }  // namespace Plugin
 }  // namespace OFX
