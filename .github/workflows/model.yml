@@ -70,18 +70,24 @@ jobs:
           git clone --depth 1 https://github.com/ByteDance-Seed/Depth-Anything-3 "$RUNNER_TEMP/da3"
           pip install -e "$RUNNER_TEMP/da3" --no-deps
 
-      - name: Export ONNX (FP16 with FP32 fallback)
+      - name: Export ONNX (FP32)
         run: |
+          # FP32 by default. The CoreML EP runs an FP32 graph in fp16 on the ANE/GPU,
+          # so an explicit fp16 file is not needed for hardware acceleration; the
+          # onnxconverter_common fp16 pass is also impractically slow on this model.
+          # Pass --fp16 manually if a smaller on-disk model is required.
           python tools/export_onnx.py \
             --height "$HEIGHT" --width "$WIDTH" \
-            --output build/model/DA3METRIC-LARGE.onnx --fp16
+            --output build/model/DA3METRIC-LARGE.onnx
 
       - name: Validate export fidelity (gate)
         run: |
+          # Must validate at the export resolution: the model's positional embedding
+          # is baked at trace time, so it only runs at HEIGHT x WIDTH.
           python tools/validate_onnx.py \
             --onnx build/model/DA3METRIC-LARGE.onnx \
-            --height 224 --width 224 \
-            --max-rel-error 0.05 --min-corr 0.99
+            --height "$HEIGHT" --width "$WIDTH" \
+            --max-rel-error 0.03 --min-corr 0.999
 
       - name: Show model sizes
         if: always()
