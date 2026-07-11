@@ -13,6 +13,17 @@ run through **ONNX Runtime** with the **CoreML execution provider** on Apple Sil
 > See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), packaging in
 > [`packaging/README.md`](packaging/README.md), and the milestone roadmap below.
 
+## Plugins in this bundle
+
+The single `.ofx.bundle` provides two plugins (sharing the ONNX Runtime/CoreML stack):
+
+- **Depth Anything 3** — metric depth (decimeters, float32) from ACEScg, on CoreML.
+- **MoGe Focal** — estimates camera **focal length / FOV / intrinsics** from one frame using
+  MoGe-2 (MIT). It's an analysis node: press **Analyze current frame** and it fills output
+  parameters (focal px, horizontal/vertical FOV, principal point) you can link to a camera.
+  DA3 doesn't predict intrinsics, so MoGe covers that gap. (MoGe runs on CPU — its dynamic graph
+  isn't CoreML-executable; the depth plugin uses CoreML.)
+
 ## Install
 
 Grab the `.pkg` from the [Releases](../../releases) page (or build one — see

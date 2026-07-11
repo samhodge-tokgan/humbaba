@@ -98,7 +98,11 @@ if(APPLE)
 endif()
 
 if(DA3_WITH_ONNX)
-  target_sources(DepthAnything3 PRIVATE src/DepthEngine.cpp)
+  target_sources(DepthAnything3 PRIVATE
+    src/DepthEngine.cpp
+    src/MoGeEngine.cpp
+    src/MoGePlugin.cpp
+  )
   target_link_libraries(DepthAnything3 PRIVATE onnxruntime)
   target_compile_definitions(DepthAnything3 PRIVATE DA3_WITH_ONNX=1)
   # Find the bundled dylib relative to the .ofx binary at runtime.
@@ -153,6 +157,17 @@ if(DA3_WITH_ONNX AND DA3_MODEL_FILE)
     COMMAND ${CMAKE_COMMAND} -E copy "${DA3_MODEL_FILE}"
             "${BUNDLE_DIR}/Contents/Resources/DA3METRIC-LARGE.onnx"
     COMMENT "Bundling ONNX model into Resources"
+    VERBATIM
+  )
+endif()
+
+# Optionally bundle the MoGe model too (for the MoGe Focal plugin).
+if(DA3_WITH_ONNX AND DA3_MOGE_MODEL_FILE)
+  add_custom_command(TARGET DepthAnything3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_DIR}/Contents/Resources"
+    COMMAND ${CMAKE_COMMAND} -E copy "${DA3_MOGE_MODEL_FILE}"
+            "${BUNDLE_DIR}/Contents/Resources/moge-2-vitb.onnx"
+    COMMENT "Bundling MoGe model into Resources"
     VERBATIM
   )
 endif()

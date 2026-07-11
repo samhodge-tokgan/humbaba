@@ -50,10 +50,15 @@ jobs:
         with:
           name: da3-model
           path: model
-      - name: Configure & build (model bundled)
+      - name: Fetch MoGe model (pre-exported ONNX, MIT)
+        run: |
+          curl -fL -o model/moge-2-vitb.onnx \
+            "https://huggingface.co/Ruicheng/moge-2-vitb-normal-onnx/resolve/main/model.onnx"
+      - name: Configure & build (both models bundled)
         run: |
           cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release \
-            -DDA3_MODEL_FILE="$PWD/model/DA3METRIC-LARGE.onnx"
+            -DDA3_MODEL_FILE="$PWD/model/DA3METRIC-LARGE.onnx" \
+            -DDA3_MOGE_MODEL_FILE="$PWD/model/moge-2-vitb.onnx"
           cmake --build build -j3
           rm -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime.1.27.1.dylib
       - name: Build .pkg (ad-hoc signed)
