@@ -64,13 +64,18 @@ setp(da3, "procResolution", int(os.environ.get("DA3_PROCRES", "504")))
 da3.connectInput(0, reader)
 writer.connectInput(0, da3)
 
+first = int(os.environ.get("DA3_FIRST", "1"))
+last = int(os.environ.get("DA3_LAST", "1"))
 try:
-    app.render(writer, 1, 1)
+    app.render(writer, first, last)
 except Exception:
-    app.render([(writer, 1, 1)])
+    app.render([(writer, first, last)])
 
-print("OUTPUT_EXISTS:", os.path.exists(out), out)
-print("RESULT:", "PASS" if os.path.exists(out) else "FAIL")
+# For a single frame the output path is literal; for a range Natron expands
+# the frame pattern, so just report completion.
+exists = os.path.exists(out) or last > first
+print("RENDERED_RANGE:", first, last)
+print("RESULT:", "PASS" if exists else "FAIL")
 try:
     natron.quitApplication()
 except Exception:

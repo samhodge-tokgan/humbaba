@@ -22,3 +22,6 @@ opencv-python-headless<4.10
 onnx>=1.15
 onnxruntime>=1.17
 onnxconverter-common>=1.14
+# dynamo exporter (dynamic-resolution ONNX)
+onnxscript>=0.7
+
