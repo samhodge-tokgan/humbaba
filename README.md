@@ -23,21 +23,21 @@ The single `.ofx.bundle` provides two plugins (sharing the ONNX Runtime/CoreML s
   parameters (focal px, horizontal/vertical FOV, principal point) you can link to a camera.
   DA3 doesn't predict intrinsics, so MoGe covers that gap. (MoGe runs on CPU — its dynamic graph
   isn't CoreML-executable; the depth plugin uses CoreML.)
-- **Lens Distortion** — holds Brown-Conrady distortion parameters and outputs the downstream lens
-  data: **OpenCV coefficients**, **3DEqualizer** coefficients (Radial Std Deg 4), and the
-  **overscan / padding** needed to render CG that will be re-distorted to the plate. It does *not*
-  apply distortion — the image passes through. Overscan is validated against OpenCV
-  (`getOptimalNewCameraMatrix`). Distortion parameters are entered manually or from a sidecar
-  (there is no standard OFX lens-metadata channel, so passthrough = parameter override); an
-  optional ML estimator hook is present — see note below.
+- **Lens Distortion** — estimates lens distortion from a natural image via **AnyCalib** (MIT/
+  Apache-2.0) and outputs the downstream lens data: **OpenCV coefficients**, **3DEqualizer**
+  coefficients (Radial Std Deg 4), and the **overscan / padding** needed to render CG that will be
+  re-distorted to the plate. It does *not* apply distortion — the image passes through. Press
+  **Estimate (AnyCalib)** to fill k1,k2,focal (or enter them manually / from a sidecar — there is
+  no standard OFX lens-metadata channel); overscan and 3DE outputs update live. Overscan is
+  validated against OpenCV (`getOptimalNewCameraMatrix`).
 
-> **Lens Distortion — ML estimation status:** the deterministic parts (overscan, OpenCV↔3DE
-> conversion, live outputs) are complete and tested. Automatic *estimation* of distortion from a
-> natural image is a pluggable ONNX hook but **no model is bundled**: the strong single-image
-> calibration models (AnyCalib, GeoCalib — both permissively licensed) embed a nonlinear solver
-> that must be reimplemented host-side, and the feed-forward Deep-BrownConrady (MIT) ships no
-> trained weights. Wiring one of these in is the next step; today you enter parameters manually or
-> from a sidecar and the overscan/3DE outputs update live.
+> **Lens Distortion — AnyCalib estimator:** the ML estimator is **AnyCalib** — its DINOv2 field
+> network runs in ONNX (CoreML/CPU) and its camera fit (DLT init + Gauss-Newton) is reimplemented
+> host-side in C++. Its `radial` model maps directly to OpenCV (`fx,fy,cx,cy,k1,k2`). Verified: the
+> plugin's **focal recovery matches AnyCalib within ~0.2%**. Distortion coefficients track AnyCalib
+> but are small/noisy on near-undistorted images, and the dynamic-resolution ONNX export shifts
+> them slightly vs the original net (see `docs/BACKLOG.md`). The deterministic overscan + OpenCV/3DE
+> outputs are exact and tested.
 
 ## Install
 
