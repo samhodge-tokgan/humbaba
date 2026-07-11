@@ -46,11 +46,16 @@ jobs:
           BIN=build/DepthAnything3.ofx.bundle/Contents/MacOS/DepthAnything3.ofx
           test -f build/DepthAnything3.ofx.bundle/Contents/Info.plist
           test -f "$BIN"
-          echo "== arch =="; lipo -info "$BIN"
-          lipo -info "$BIN" | grep -q arm64
-          lipo -info "$BIN" | grep -q x86_64
-          echo "== OFX symbols =="; nm -gU "$BIN" | grep -E 'OfxGetPlugin|OfxGetNumberOfPlugins'
-          nm -gU "$BIN" | grep -q OfxGetPlugin
+          # Capture command output into variables first: piping a large stream into
+          # `grep -q` closes the pipe early and, with pipefail, surfaces as SIGPIPE.
+          ARCHES="$(lipo -info "$BIN")"
+          echo "== arch == $ARCHES"
+          echo "$ARCHES" | grep -q arm64
+          echo "$ARCHES" | grep -q x86_64
+          SYMS="$(nm -gU "$BIN")"
+          echo "== OFX symbols =="
+          echo "$SYMS" | grep -E 'OfxGetPlugin|OfxGetNumberOfPlugins'
+          echo "$SYMS" | grep -q OfxGetPlugin
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
