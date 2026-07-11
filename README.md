@@ -55,11 +55,27 @@ ONNX Runtime option). The plugin's "maximum resources" control therefore governs
 - **Processing resolution & tiling** — smaller inference resolution, or overlapping tiles with
   scale/shift alignment and feathered blending, to bound peak memory.
 
+### Operational notes (important)
+
+- **Model file:** the ONNX model is selected by the *Model file* parameter, or the
+  `DA3_MODEL_PATH` environment variable (the release build bundles it in `Contents/Resources`).
+  Build it with `tools/export_onnx.py` or download the CI artifact.
+- **Fixed processing resolution:** the exported model is traced at a fixed resolution (default
+  **504×504**) because the DINOv2 positional embedding is baked at trace time. The plugin's
+  *Processing resolution* must match the model's export resolution. (Multi-resolution support is a
+  M4 concern.)
+- **Depth is data, not color:** the output is float metric depth, not an image. In your host, read
+  the source with its correct colorspace (the plugin does ACEScg→sRGB internally) and write the
+  depth output through a **raw/data** colorspace so the values are not tone-mapped or clamped.
+- Verified locally: on a sample frame the plugin's output (26–104 decimeters ≈ 2.6–10.4 m) matches
+  the reference `inference()` depth (2.4–12.9 m), running on the CoreML EP.
+
 ## Model & license
 
 - Model: [`depth-anything/DA3METRIC-LARGE`](https://huggingface.co/depth-anything/DA3METRIC-LARGE)
   — ViT-Large, patch size 14, **Apache-2.0** (commercial use permitted).
 - This plugin is **Apache-2.0** (see [`LICENSE`](LICENSE)).
+- ONNX Runtime **v1.27.1** (arm64, CoreML EP) is fetched by CMake and bundled at release time.
 - ONNX Runtime is MIT-licensed (bundled at release time).
 
 ## Roadmap (milestones = PRs)
