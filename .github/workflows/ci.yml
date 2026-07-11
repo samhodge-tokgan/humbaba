@@ -46,16 +46,17 @@ jobs:
           BIN=build/DepthAnything3.ofx.bundle/Contents/MacOS/DepthAnything3.ofx
           test -f build/DepthAnything3.ofx.bundle/Contents/Info.plist
           test -f "$BIN"
-          # Capture command output into variables first: piping a large stream into
-          # `grep -q` closes the pipe early and, with pipefail, surfaces as SIGPIPE.
+          # Use shell pattern matching, not `... | grep -q`: grep -q exits on first
+          # match and the large upstream (nm) gets SIGPIPE, which pipefail turns into
+          # a failure.
           ARCHES="$(lipo -info "$BIN")"
           echo "== arch == $ARCHES"
-          echo "$ARCHES" | grep -q arm64
-          echo "$ARCHES" | grep -q x86_64
+          case "$ARCHES" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
+          case "$ARCHES" in *x86_64*) ;; *) echo "missing x86_64"; exit 1;; esac
           SYMS="$(nm -gU "$BIN")"
           echo "== OFX symbols =="
-          echo "$SYMS" | grep -E 'OfxGetPlugin|OfxGetNumberOfPlugins'
-          echo "$SYMS" | grep -q OfxGetPlugin
+          case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
+          case "$SYMS" in *OfxGetNumberOfPlugins*) echo "OfxGetNumberOfPlugins present" ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
