@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Skeleton CI. Real build/test jobs are added with their milestones:
+#   - M1 adds model export + ONNX validation (see model.yml)
+#   - M2 adds the CMake plugin build (universal .ofx bundle)
+
+jobs:
+  sanity:
+    name: Repo sanity
+    runs-on: macos-14   # Apple Silicon runner (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          set -euo pipefail
+          for f in LICENSE README.md docs/DEVELOPMENT.md .gitignore; do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+          echo "Repo sanity OK"
+
+      - name: Confirm LICENSE is Apache-2.0
+        run: grep -q "Apache License" LICENSE && grep -q "Version 2.0" LICENSE
+
+  # Placeholder for the plugin build; enabled in M2 once CMake + sources land.
+  build:
+    name: Build plugin (enabled in M2)
+    runs-on: macos-14
+    if: false
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "CMake universal build wired up in M2"
