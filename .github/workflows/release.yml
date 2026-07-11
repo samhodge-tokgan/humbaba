@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for the .pkg"
+        default: "0.1.0"
+  push:
+    tags: ["v*"]
+
+jobs:
+  # Export the dynamic-resolution ONNX model on Linux (heavy), share as an artifact.
+  export-model:
+    name: Export model
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps + DA3
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch>=2" torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r tools/requirements.txt
+          git clone --depth 1 https://github.com/ByteDance-Seed/Depth-Anything-3 "$RUNNER_TEMP/da3"
+          pip install -e "$RUNNER_TEMP/da3" --no-deps
+      - name: Export dynamic ONNX
+        run: |
+          python tools/export_onnx.py --height 490 --width 490 \
+            --output build/model/DA3METRIC-LARGE.onnx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: da3-model
+          path: build/model/DA3METRIC-LARGE.onnx
+          if-no-files-found: error
+
+  # Build the plugin with the model bundled and produce the .pkg installer.
+  package:
+    name: Build .pkg
+    needs: export-model
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: da3-model
+          path: model
+      - name: Configure & build (model bundled)
+        run: |
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release \
+            -DDA3_MODEL_FILE="$PWD/model/DA3METRIC-LARGE.onnx"
+          cmake --build build -j3
+          rm -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime.1.27.1.dylib
+      - name: Build .pkg (ad-hoc signed)
+        env:
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          V="${VERSION#v}"; [ -n "$V" ] || V="0.1.0"
+          packaging/make_pkg.sh --bundle build/DepthAnything3.ofx.bundle \
+            --out "dist/DepthAnything3-$V.pkg" --version "$V"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DepthAnything3-pkg
+          path: dist/*.pkg
+          if-no-files-found: error
+      - name: Attach to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: gh release create "${GITHUB_REF_NAME}" dist/*.pkg --generate-notes || \
+             gh release upload "${GITHUB_REF_NAME}" dist/*.pkg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

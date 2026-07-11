@@ -145,6 +145,18 @@ if(DA3_WITH_ONNX)
   )
 endif()
 
+# Optionally bundle the ONNX model into Contents/Resources (release/self-contained
+# build). Configure with -DDA3_MODEL_FILE=/path/to/DA3METRIC-LARGE.onnx.
+if(DA3_WITH_ONNX AND DA3_MODEL_FILE)
+  add_custom_command(TARGET DepthAnything3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_DIR}/Contents/Resources"
+    COMMAND ${CMAKE_COMMAND} -E copy "${DA3_MODEL_FILE}"
+            "${BUNDLE_DIR}/Contents/Resources/DA3METRIC-LARGE.onnx"
+    COMMENT "Bundling ONNX model into Resources"
+    VERBATIM
+  )
+endif()
+
 # ---------------------------------------------------------------------------
 # Provider-check tool: prints the ONNX Runtime execution providers (verifies
 # CoreML is available). Built only with ONNX enabled.
