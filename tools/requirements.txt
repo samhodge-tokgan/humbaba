@@ -1,10 +1,24 @@
-# Python deps for the model->ONNX pipeline (CPU). The DA3 package itself is
-# installed separately in CI via: git clone + `pip install -e .` (it pulls torch,
-# xformers, einops, safetensors, huggingface_hub, etc. per its pyproject).
-# These are the extra ONNX-side tools layered on top.
+# Python deps for the model->ONNX pipeline (CPU).
+#
+# Depth Anything 3 is installed separately and WITHOUT its own deps
+# (`pip install -e da3-src --no-deps`), because a full install tries to build
+# xformers, which has no macOS-arm64 wheel. tools/_da3_compat.py stubs the heavy
+# optional modules (open3d/moviepy/evo/... ) that the ONNX depth path never runs.
+# The list below is the curated subset DA3 actually needs to load + export depth.
 --extra-index-url https://download.pytorch.org/whl/cpu
 numpy<2
+addict
+einops
+safetensors
+huggingface_hub
+omegaconf
+pillow
+imageio
+typer
+scipy
+matplotlib
+opencv-python-headless<4.10
+# ONNX side
 onnx>=1.15
 onnxruntime>=1.17
 onnxconverter-common>=1.14
-pillow
