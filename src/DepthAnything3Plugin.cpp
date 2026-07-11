@@ -1,24 +1,34 @@
 // Copyright the openfx-onnx-depthanything3 authors.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Depth Anything 3 OpenFX plugin — M2 skeleton.
+// Depth Anything 3 OpenFX plugin.
 //
-// At this milestone the effect is a straight passthrough (copies the source clip
-// to the output) that builds as a universal .ofx bundle and loads in an OFX host.
-// M3 replaces the copy processor with the ACEScg -> ONNX Runtime (CoreML) depth
-// inference and writes float32 decimeter depth to the output.
+// Predicts metric depth (decimeters, float32) from an ACEScg RGB image using the
+// DA3 metric model via ONNX Runtime with the CoreML execution provider. Output is
+// a same-size grayscale depth (Z) written to R=G=B, alpha passed through.
+//
+// If built without ONNX Runtime (DA3_WITH_ONNX undefined), render() is a passthrough.
 
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
 #endif
 
-#include <cstdio>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "ofxsImageEffect.h"
 #include "ofxsMultiThread.h"
 #include "ofxsProcessing.H"
+
+#if DA3_WITH_ONNX
+#include "DepthEngine.h"
+#endif
 
 #define kPluginName "Depth Anything 3"
 #define kPluginGrouping "TokGan"
@@ -29,149 +39,258 @@
 #define kPluginVersionMajor 0
 #define kPluginVersionMinor 1
 
+#define kParamModelFile "modelFile"
+#define kParamComputeUnits "computeUnits"
+#define kParamProcRes "procResolution"
+#define kParamThreads "intraThreads"
+#define kParamGain "depthGain"
+#define kParamInputACEScg "inputIsACEScg"
+
 ////////////////////////////////////////////////////////////////////////////////
-// Non-templated processor base so setupAndProcess() can wire the source image
-// without knowing the pixel type.
+// Color: ACEScg (AP1, linear) -> linear Rec.709 -> sRGB, per channel in [0,1].
+
+static inline float srgbEncode(float c) {
+  c = std::min(std::max(c, 0.0f), 1.0f);
+  return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+}
+
+static inline void acescgToSrgb(float r, float g, float b, float* out) {
+  // AP1 -> Rec.709 (linear) matrix.
+  float lr = 1.70505f * r - 0.62179f * g - 0.08326f * b;
+  float lg = -0.13026f * r + 1.14080f * g - 0.01055f * b;
+  float lb = -0.02400f * r - 0.12897f * g + 1.15297f * b;
+  out[0] = srgbEncode(lr);
+  out[1] = srgbEncode(lg);
+  out[2] = srgbEncode(lb);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Passthrough copy processor (used when ONNX is unavailable or depth unsupported).
 
 class CopyBase : public OFX::ImageProcessor {
-protected:
-  OFX::Image *_srcImg;
-
-public:
-  explicit CopyBase(OFX::ImageEffect &instance)
-      : OFX::ImageProcessor(instance), _srcImg(nullptr) {}
-
-  void setSrcImg(OFX::Image *v) { _srcImg = v; }
+ protected:
+  OFX::Image* _srcImg;
+ public:
+  explicit CopyBase(OFX::ImageEffect& e) : OFX::ImageProcessor(e), _srcImg(nullptr) {}
+  void setSrcImg(OFX::Image* v) { _srcImg = v; }
 };
 
-// Templated copy: byte / short / float, RGBA or single-channel Alpha.
 template <class PIX, int nComponents>
 class CopyProcessor : public CopyBase {
-public:
-  explicit CopyProcessor(OFX::ImageEffect &instance) : CopyBase(instance) {}
-
-  void multiThreadProcessImages(OfxRectI procWindow) override {
-    for (int y = procWindow.y1; y < procWindow.y2; ++y) {
+ public:
+  explicit CopyProcessor(OFX::ImageEffect& e) : CopyBase(e) {}
+  void multiThreadProcessImages(OfxRectI w) override {
+    for (int y = w.y1; y < w.y2; ++y) {
       if (_effect.abort()) break;
-
-      PIX *dstPix = static_cast<PIX *>(_dstImg->getPixelAddress(procWindow.x1, y));
-
-      for (int x = procWindow.x1; x < procWindow.x2; ++x) {
-        const PIX *srcPix =
-            static_cast<const PIX *>(_srcImg ? _srcImg->getPixelAddress(x, y) : nullptr);
-
-        if (srcPix) {
-          for (int c = 0; c < nComponents; ++c) dstPix[c] = srcPix[c];
-        } else {
-          for (int c = 0; c < nComponents; ++c) dstPix[c] = PIX(0);
-        }
-        dstPix += nComponents;
+      PIX* dst = static_cast<PIX*>(_dstImg->getPixelAddress(w.x1, y));
+      for (int x = w.x1; x < w.x2; ++x) {
+        const PIX* src = static_cast<const PIX*>(_srcImg ? _srcImg->getPixelAddress(x, y) : nullptr);
+        if (src)
+          for (int c = 0; c < nComponents; ++c) dst[c] = src[c];
+        else
+          for (int c = 0; c < nComponents; ++c) dst[c] = PIX(0);
+        dst += nComponents;
       }
     }
   }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-/** @brief The plugin instance. */
 
 class DepthAnything3Plugin : public OFX::ImageEffect {
-protected:
-  // Managed by the host; do not delete.
-  OFX::Clip *_dstClip;
-  OFX::Clip *_srcClip;
+ protected:
+  OFX::Clip* _dstClip;
+  OFX::Clip* _srcClip;
+  OFX::StringParam* _modelFile;
+  OFX::ChoiceParam* _computeUnits;
+  OFX::IntParam* _procRes;
+  OFX::IntParam* _threads;
+  OFX::DoubleParam* _gain;
+  OFX::BooleanParam* _inputACEScg;
 
-public:
-  explicit DepthAnything3Plugin(OfxImageEffectHandle handle)
-      : OFX::ImageEffect(handle), _dstClip(nullptr), _srcClip(nullptr) {
+ public:
+  explicit DepthAnything3Plugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
     _dstClip = fetchClip(kOfxImageEffectOutputClipName);
     _srcClip = fetchClip(kOfxImageEffectSimpleSourceClipName);
+    _modelFile = fetchStringParam(kParamModelFile);
+    _computeUnits = fetchChoiceParam(kParamComputeUnits);
+    _procRes = fetchIntParam(kParamProcRes);
+    _threads = fetchIntParam(kParamThreads);
+    _gain = fetchDoubleParam(kParamGain);
+    _inputACEScg = fetchBooleanParam(kParamInputACEScg);
   }
 
-  void render(const OFX::RenderArguments &args) override;
+  void render(const OFX::RenderArguments& args) override;
 
-private:
-  void setupAndProcess(CopyBase &processor, const OFX::RenderArguments &args);
+ private:
+  void renderPassthrough(const OFX::RenderArguments& args);
+#if DA3_WITH_ONNX
+  bool renderDepth(const OFX::RenderArguments& args);
+  std::string resolveModelPath();
+  std::unique_ptr<da3::DepthEngine> _engine;
+  std::string _engineKey;
+#endif
 };
 
-void DepthAnything3Plugin::setupAndProcess(CopyBase &processor,
-                                           const OFX::RenderArguments &args) {
-  std::unique_ptr<OFX::Image> dst(_dstClip->fetchImage(args.time));
-  if (!dst.get()) OFX::throwSuiteStatusException(kOfxStatFailed);
+////////////////////////////////////////////////////////////////////////////////
 
-  const OFX::BitDepthEnum dstBitDepth = dst->getPixelDepth();
-  const OFX::PixelComponentEnum dstComponents = dst->getPixelComponents();
+#if DA3_WITH_ONNX
 
-  std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(args.time));
-  if (src.get()) {
-    if (src->getPixelDepth() != dstBitDepth ||
-        src->getPixelComponents() != dstComponents) {
-      OFX::throwSuiteStatusException(kOfxStatErrImageFormat);
-    }
-  }
-
-  processor.setSrcImg(src.get());
-  processor.setDstImg(dst.get());
-  processor.setRenderWindow(args.renderWindow);
-  processor.process();
+std::string DepthAnything3Plugin::resolveModelPath() {
+  std::string p;
+  _modelFile->getValue(p);
+  if (!p.empty()) return p;
+  if (const char* env = std::getenv("DA3_MODEL_PATH")) return std::string(env);
+  return std::string();
 }
 
-void DepthAnything3Plugin::render(const OFX::RenderArguments &args) {
-  const OFX::BitDepthEnum dstBitDepth = _dstClip->getPixelDepth();
-  const OFX::PixelComponentEnum dstComponents = _dstClip->getPixelComponents();
+bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
+  std::unique_ptr<OFX::Image> dst(_dstClip->fetchImage(args.time));
+  std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(args.time));
+  if (!dst.get() || !src.get()) return false;
+  if (dst->getPixelDepth() != OFX::eBitDepthFloat ||
+      dst->getPixelComponents() != OFX::ePixelComponentRGBA)
+    return false;
 
-  if (dstComponents == OFX::ePixelComponentRGBA) {
-    switch (dstBitDepth) {
-      case OFX::eBitDepthUByte: {
-        CopyProcessor<unsigned char, 4> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      case OFX::eBitDepthUShort: {
-        CopyProcessor<unsigned short, 4> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      case OFX::eBitDepthFloat: {
-        CopyProcessor<float, 4> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      default:
-        OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
-    }
-  } else {
-    switch (dstBitDepth) {
-      case OFX::eBitDepthUByte: {
-        CopyProcessor<unsigned char, 1> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      case OFX::eBitDepthUShort: {
-        CopyProcessor<unsigned short, 1> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      case OFX::eBitDepthFloat: {
-        CopyProcessor<float, 1> p(*this);
-        setupAndProcess(p, args);
-      } break;
-      default:
-        OFX::throwSuiteStatusException(kOfxStatErrUnsupported);
+  const OfxRectI rod = src->getRegionOfDefinition();
+  const int W = rod.x2 - rod.x1;
+  const int H = rod.y2 - rod.y1;
+  if (W <= 0 || H <= 0) return false;
+
+  const std::string modelPath = resolveModelPath();
+  if (modelPath.empty()) {
+    setPersistentMessage(OFX::Message::eMessageError, "",
+                         "No ONNX model set (parameter 'Model file' or $DA3_MODEL_PATH).");
+    return false;
+  }
+
+  int procRes = 504;
+  _procRes->getValue(procRes);
+  int threads = 0;
+  _threads->getValue(threads);
+  int cu = 0;
+  _computeUnits->getValue(cu);
+  const da3::ComputeUnits units = static_cast<da3::ComputeUnits>(cu);
+
+  const std::string key = modelPath + "|" + std::to_string(cu) + "|" +
+                          std::to_string(threads) + "|" + std::to_string(procRes);
+  if (!_engine || key != _engineKey) {
+    _engine = std::make_unique<da3::DepthEngine>(modelPath, units, threads, procRes, procRes);
+    _engineKey = key;
+    if (!_engine->last_error().empty()) {
+      setPersistentMessage(OFX::Message::eMessageError, "", _engine->last_error());
+      _engine.reset();
+      _engineKey.clear();
+      return false;
     }
   }
+
+  // Build an RGB [0,1] buffer over the source RoD (row-major, y increasing).
+  bool acescg = true;
+  _inputACEScg->getValue(acescg);
+  std::vector<float> rgb(static_cast<size_t>(W) * H * 3);
+  for (int y = 0; y < H; ++y) {
+    for (int x = 0; x < W; ++x) {
+      const float* s =
+          static_cast<const float*>(src->getPixelAddress(rod.x1 + x, rod.y1 + y));
+      float* d = rgb.data() + (static_cast<size_t>(y) * W + x) * 3;
+      if (!s) {
+        d[0] = d[1] = d[2] = 0.f;
+        continue;
+      }
+      if (acescg) {
+        acescgToSrgb(s[0], s[1], s[2], d);
+      } else {
+        d[0] = std::min(std::max(s[0], 0.f), 1.f);
+        d[1] = std::min(std::max(s[1], 0.f), 1.f);
+        d[2] = std::min(std::max(s[2], 0.f), 1.f);
+      }
+    }
+  }
+
+  da3::DepthResult res = _engine->Run(rgb.data(), W, H);
+  if (res.depth.empty()) {
+    setPersistentMessage(OFX::Message::eMessageError, "",
+                         _engine->last_error().empty() ? "Inference failed" : _engine->last_error());
+    return false;
+  }
+  clearPersistentMessage();
+
+  double gain = 1.0;
+  _gain->getValue(gain);
+  const float scale = static_cast<float>(10.0 * gain);  // meters -> decimeters * gain
+
+  // Write depth to R=G=B, alpha passed through, over the render window.
+  const OfxRectI w = args.renderWindow;
+  for (int y = w.y1; y < w.y2; ++y) {
+    if (abort()) break;
+    float* dpix = static_cast<float*>(dst->getPixelAddress(w.x1, y));
+    for (int x = w.x1; x < w.x2; ++x) {
+      int lx = x - rod.x1, ly = y - rod.y1;
+      float z = 0.f;
+      if (lx >= 0 && lx < W && ly >= 0 && ly < H)
+        z = res.depth[static_cast<size_t>(ly) * W + lx] * scale;
+      const float* s = static_cast<const float*>(src->getPixelAddress(x, y));
+      dpix[0] = z;
+      dpix[1] = z;
+      dpix[2] = z;
+      dpix[3] = s ? s[3] : 1.0f;
+      dpix += 4;
+    }
+  }
+  return true;
+}
+
+#endif  // DA3_WITH_ONNX
+
+void DepthAnything3Plugin::renderPassthrough(const OFX::RenderArguments& args) {
+  std::unique_ptr<OFX::Image> dst(_dstClip->fetchImage(args.time));
+  if (!dst.get()) OFX::throwSuiteStatusException(kOfxStatFailed);
+  const OFX::BitDepthEnum bd = dst->getPixelDepth();
+  const OFX::PixelComponentEnum comp = dst->getPixelComponents();
+  std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(args.time));
+
+  auto run = [&](CopyBase& p) {
+    p.setSrcImg(src.get());
+    p.setDstImg(dst.get());
+    p.setRenderWindow(args.renderWindow);
+    p.process();
+  };
+  if (comp == OFX::ePixelComponentRGBA) {
+    if (bd == OFX::eBitDepthFloat) { CopyProcessor<float, 4> p(*this); run(p); }
+    else if (bd == OFX::eBitDepthUShort) { CopyProcessor<unsigned short, 4> p(*this); run(p); }
+    else { CopyProcessor<unsigned char, 4> p(*this); run(p); }
+  } else {
+    if (bd == OFX::eBitDepthFloat) { CopyProcessor<float, 1> p(*this); run(p); }
+    else if (bd == OFX::eBitDepthUShort) { CopyProcessor<unsigned short, 1> p(*this); run(p); }
+    else { CopyProcessor<unsigned char, 1> p(*this); run(p); }
+  }
+}
+
+void DepthAnything3Plugin::render(const OFX::RenderArguments& args) {
+#if DA3_WITH_ONNX
+  if (_dstClip->getPixelDepth() == OFX::eBitDepthFloat &&
+      _dstClip->getPixelComponents() == OFX::ePixelComponentRGBA) {
+    if (renderDepth(args)) return;
+    // fall through to passthrough on failure so the graph still renders
+  }
+#endif
+  renderPassthrough(args);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/** @brief The factory. */
 
 mDeclarePluginFactory(DepthAnything3Factory, {}, {});
 
 using namespace OFX;
 
-void DepthAnything3Factory::describe(OFX::ImageEffectDescriptor &desc) {
+void DepthAnything3Factory::describe(OFX::ImageEffectDescriptor& desc) {
   desc.setLabels(kPluginName, kPluginName, kPluginName);
   desc.setPluginGrouping(kPluginGrouping);
   desc.setPluginDescription(kPluginDescription);
 
   desc.addSupportedContext(eContextFilter);
   desc.addSupportedContext(eContextGeneral);
-
-  // Depth inference works on float; byte/short supported for the passthrough skeleton.
   desc.addSupportedBitDepth(eBitDepthFloat);
   desc.addSupportedBitDepth(eBitDepthUByte);
   desc.addSupportedBitDepth(eBitDepthUShort);
@@ -179,35 +298,89 @@ void DepthAnything3Factory::describe(OFX::ImageEffectDescriptor &desc) {
   desc.setSingleInstance(false);
   desc.setHostFrameThreading(false);
   desc.setSupportsMultiResolution(true);
-  desc.setSupportsTiles(true);  // revisited in M3/M4 (whole-image inference / tiling)
+  // Depth inference needs the whole image: no tiling.
+  desc.setSupportsTiles(false);
   desc.setTemporalClipAccess(false);
   desc.setRenderTwiceAlways(false);
   desc.setSupportsMultipleClipPARs(false);
 }
 
-void DepthAnything3Factory::describeInContext(OFX::ImageEffectDescriptor &desc,
+void DepthAnything3Factory::describeInContext(OFX::ImageEffectDescriptor& desc,
                                               OFX::ContextEnum /*context*/) {
-  ClipDescriptor *srcClip = desc.defineClip(kOfxImageEffectSimpleSourceClipName);
-  srcClip->addSupportedComponent(ePixelComponentRGBA);
-  srcClip->addSupportedComponent(ePixelComponentAlpha);
-  srcClip->setTemporalClipAccess(false);
-  srcClip->setSupportsTiles(true);
-  srcClip->setIsMask(false);
+  ClipDescriptor* src = desc.defineClip(kOfxImageEffectSimpleSourceClipName);
+  src->addSupportedComponent(ePixelComponentRGBA);
+  src->setTemporalClipAccess(false);
+  src->setSupportsTiles(false);
+  src->setIsMask(false);
 
-  ClipDescriptor *dstClip = desc.defineClip(kOfxImageEffectOutputClipName);
-  dstClip->addSupportedComponent(ePixelComponentRGBA);
-  dstClip->addSupportedComponent(ePixelComponentAlpha);
-  dstClip->setSupportsTiles(true);
+  ClipDescriptor* dst = desc.defineClip(kOfxImageEffectOutputClipName);
+  dst->addSupportedComponent(ePixelComponentRGBA);
+  dst->setSupportsTiles(false);
+
+  PageParamDescriptor* page = desc.definePageParam("Controls");
+
+  {
+    StringParamDescriptor* p = desc.defineStringParam(kParamModelFile);
+    p->setLabel("Model file");
+    p->setHint("Path to the DA3 ONNX model. Falls back to $DA3_MODEL_PATH, then the bundle.");
+    p->setStringType(eStringTypeFilePath);
+    page->addChild(*p);
+  }
+  {
+    BooleanParamDescriptor* p = desc.defineBooleanParam(kParamInputACEScg);
+    p->setLabel("Input is ACEScg");
+    p->setHint("Convert ACEScg (AP1 linear) to sRGB before inference.");
+    p->setDefault(true);
+    page->addChild(*p);
+  }
+  {
+    ChoiceParamDescriptor* p = desc.defineChoiceParam(kParamComputeUnits);
+    p->setLabel("Compute units");
+    p->setHint("CoreML hardware selection.");
+    p->appendOption("All (ANE/GPU/CPU)");
+    p->appendOption("CPU + GPU");
+    p->appendOption("CPU + Neural Engine");
+    p->appendOption("CPU only");
+    p->setDefault(0);
+    page->addChild(*p);
+  }
+  {
+    IntParamDescriptor* p = desc.defineIntParam(kParamProcRes);
+    p->setLabel("Processing resolution");
+    p->setHint("Model inference resolution (rounded to a multiple of 14). Lower = less memory.");
+    p->setRange(140, 1540);
+    p->setDisplayRange(224, 1036);
+    p->setDefault(504);
+    page->addChild(*p);
+  }
+  {
+    IntParamDescriptor* p = desc.defineIntParam(kParamThreads);
+    p->setLabel("Max threads");
+    p->setHint("Intra-op thread cap (0 = ORT default).");
+    p->setRange(0, 32);
+    p->setDisplayRange(0, 16);
+    p->setDefault(0);
+    page->addChild(*p);
+  }
+  {
+    DoubleParamDescriptor* p = desc.defineDoubleParam(kParamGain);
+    p->setLabel("Depth gain");
+    p->setHint("Multiplier on the decimeter output for correction.");
+    p->setRange(0.0, 1000.0);
+    p->setDisplayRange(0.1, 10.0);
+    p->setDefault(1.0);
+    page->addChild(*p);
+  }
 }
 
-OFX::ImageEffect *DepthAnything3Factory::createInstance(OfxImageEffectHandle handle,
+OFX::ImageEffect* DepthAnything3Factory::createInstance(OfxImageEffectHandle handle,
                                                         OFX::ContextEnum /*context*/) {
   return new DepthAnything3Plugin(handle);
 }
 
 namespace OFX {
 namespace Plugin {
-void getPluginIDs(OFX::PluginFactoryArray &ids) {
+void getPluginIDs(OFX::PluginFactoryArray& ids) {
   static DepthAnything3Factory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
   ids.push_back(&p);
 }

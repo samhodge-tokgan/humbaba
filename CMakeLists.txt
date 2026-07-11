@@ -5,6 +5,8 @@ project(DepthAnything3OFX VERSION 0.1.0 LANGUAGES CXX)
 # Options
 # ---------------------------------------------------------------------------
 option(DA3_UNIVERSAL "Build a universal arm64+x86_64 binary (macOS)" ON)
+option(DA3_WITH_ONNX "Link ONNX Runtime (CoreML EP) and enable depth inference" ON)
+set(DA3_ORT_VERSION "1.27.1" CACHE STRING "ONNX Runtime version to fetch")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,7 +15,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-if(APPLE AND DA3_UNIVERSAL)
+# The prebuilt ONNX Runtime with the CoreML EP is arm64-only, so an ONNX-enabled
+# build is arm64-only (which is also what the Apple Neural Engine path requires).
+if(APPLE AND DA3_WITH_ONNX)
+  set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "arm64 (ONNX Runtime CoreML)" FORCE)
+elseif(APPLE AND DA3_UNIVERSAL)
   set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "OFX host arch must match" FORCE)
 endif()
 
@@ -33,6 +39,26 @@ FetchContent_MakeAvailable(openfx)
 
 set(OFX_ROOT "${openfx_SOURCE_DIR}")
 set(OFX_SUPPORT "${OFX_ROOT}/Support")
+
+# ---------------------------------------------------------------------------
+# ONNX Runtime (prebuilt, arm64, with the CoreML execution provider compiled in).
+# Populate-only: it's a binary release (headers + dylib), not a CMake project.
+# ---------------------------------------------------------------------------
+if(DA3_WITH_ONNX)
+  FetchContent_Declare(onnxruntime
+    URL "https://github.com/microsoft/onnxruntime/releases/download/v${DA3_ORT_VERSION}/onnxruntime-osx-arm64-${DA3_ORT_VERSION}.tgz"
+    URL_HASH SHA256=e42b77a7281cc6e55141bf44fcfbac2c782b823a491bbb6ac33c781dd991f8a6
+  )
+  FetchContent_MakeAvailable(onnxruntime)
+  set(ORT_DIR "${onnxruntime_SOURCE_DIR}")
+  set(ORT_DYLIB "${ORT_DIR}/lib/libonnxruntime.${DA3_ORT_VERSION}.dylib")
+
+  add_library(onnxruntime SHARED IMPORTED)
+  set_target_properties(onnxruntime PROPERTIES
+    IMPORTED_LOCATION "${ORT_DYLIB}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ORT_DIR}/include"
+  )
+endif()
 
 # ---------------------------------------------------------------------------
 # OpenFX C++ Support library
@@ -71,6 +97,17 @@ if(APPLE)
   target_link_options(DepthAnything3 PRIVATE -bundle)
 endif()
 
+if(DA3_WITH_ONNX)
+  target_sources(DepthAnything3 PRIVATE src/DepthEngine.cpp)
+  target_link_libraries(DepthAnything3 PRIVATE onnxruntime)
+  target_compile_definitions(DepthAnything3 PRIVATE DA3_WITH_ONNX=1)
+  # Find the bundled dylib relative to the .ofx binary at runtime.
+  set_target_properties(DepthAnything3 PROPERTIES
+    BUILD_WITH_INSTALL_RPATH ON
+    INSTALL_RPATH "@loader_path/../Frameworks"
+  )
+endif()
+
 # ---------------------------------------------------------------------------
 # Assemble the .ofx.bundle (macOS layout: Contents/{Info.plist,MacOS/*.ofx})
 # ---------------------------------------------------------------------------
@@ -92,6 +129,34 @@ add_custom_command(TARGET DepthAnything3 POST_BUILD
   COMMENT "Assembling ${OFX_BUNDLE_NAME}.ofx.bundle"
   VERBATIM
 )
+
+# Bundle the ONNX Runtime dylib inside the .ofx.bundle (Contents/Frameworks) so
+# the plugin is self-contained. The install name is @rpath/..., resolved by the
+# plugin's @loader_path/../Frameworks rpath set above.
+if(DA3_WITH_ONNX)
+  # The plugin links against the install name @rpath/libonnxruntime.1.dylib, so the
+  # bundled file must carry that exact name (the tarball's real file is versioned).
+  add_custom_command(TARGET DepthAnything3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_DIR}/Contents/Frameworks"
+    COMMAND ${CMAKE_COMMAND} -E copy "${ORT_DYLIB}"
+            "${BUNDLE_DIR}/Contents/Frameworks/libonnxruntime.1.dylib"
+    COMMENT "Bundling ONNX Runtime dylib"
+    VERBATIM
+  )
+endif()
+
+# ---------------------------------------------------------------------------
+# Provider-check tool: prints the ONNX Runtime execution providers (verifies
+# CoreML is available). Built only with ONNX enabled.
+# ---------------------------------------------------------------------------
+if(DA3_WITH_ONNX)
+  add_executable(ort_check tests/ort_check.cpp)
+  target_link_libraries(ort_check PRIVATE onnxruntime)
+  set_target_properties(ort_check PROPERTIES
+    BUILD_RPATH "${ORT_DIR}/lib"
+    INSTALL_RPATH "${ORT_DIR}/lib"
+  )
+endif()
 
 # ---------------------------------------------------------------------------
 # Install: drop the bundle into the user's OFX plugin dir (override with

@@ -30,33 +30,36 @@ jobs:
         run: grep -q "Apache License" LICENSE && grep -q "Version 2.0" LICENSE
 
   build:
-    name: Build universal .ofx bundle
+    name: Build .ofx bundle (ONNX/CoreML, arm64)
     runs-on: macos-14   # Apple Silicon
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure & build (universal arm64+x86_64)
+      - name: Configure & build (ONNX Runtime + CoreML, arm64)
         run: |
-          cmake -S . -B build -DDA3_UNIVERSAL=ON -DCMAKE_BUILD_TYPE=Release
+          # ONNX Runtime's CoreML build is arm64-only, so the inference build is arm64.
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j3
 
-      - name: Verify bundle, architectures and OFX entry points
+      - name: Verify bundle, architecture, OFX symbols and bundled runtime
         run: |
           set -euo pipefail
           BIN=build/DepthAnything3.ofx.bundle/Contents/MacOS/DepthAnything3.ofx
           test -f build/DepthAnything3.ofx.bundle/Contents/Info.plist
           test -f "$BIN"
-          # Use shell pattern matching, not `... | grep -q`: grep -q exits on first
-          # match and the large upstream (nm) gets SIGPIPE, which pipefail turns into
-          # a failure.
+          test -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime.1.dylib
+          # Shell pattern matching, not `... | grep -q` (SIGPIPE under pipefail).
           ARCHES="$(lipo -info "$BIN")"
           echo "== arch == $ARCHES"
           case "$ARCHES" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
-          case "$ARCHES" in *x86_64*) ;; *) echo "missing x86_64"; exit 1;; esac
           SYMS="$(nm -gU "$BIN")"
           echo "== OFX symbols =="
           case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
-          case "$SYMS" in *OfxGetNumberOfPlugins*) echo "OfxGetNumberOfPlugins present" ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+          case "$SYMS" in *OfxGetNumberOfPlugins*) ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+
+      - name: Verify CoreML EP available at runtime
+        run: |
+          ./build/ort_check
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
