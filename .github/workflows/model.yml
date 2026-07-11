@@ -1,0 +1,99 @@
+name: Model export & validate
+
+on:
+  workflow_dispatch:
+    inputs:
+      height:
+        description: "Export trace height (multiple of 14)"
+        default: "504"
+      width:
+        description: "Export trace width (multiple of 14)"
+        default: "504"
+  push:
+    branches: [main]
+    paths:
+      - "tools/**"
+      - ".github/workflows/model.yml"
+  pull_request:
+    paths:
+      - "tools/**"
+      - ".github/workflows/model.yml"
+
+jobs:
+  # Fast gate on every PR/push: the pipeline scripts parse and import cleanly.
+  lint:
+    name: Lint pipeline scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Byte-compile
+        run: python -m py_compile tools/export_onnx.py tools/validate_onnx.py tools/quantize_int8.py tools/_da3_compat.py
+      - name: Import compat shim (no heavy deps)
+        run: python -c "import sys; sys.path.insert(0,'tools'); import _da3_compat; print('stubs:', _da3_compat.ensure_da3_importable()[:3], '...')"
+
+  # Heavy export: downloads the 1.4 GB model, exports + validates, uploads the ONNX.
+  # Skipped on pull_request (memory/time intensive); runs on manual dispatch and
+  # after merge to main. Verified end-to-end locally on Apple Silicon.
+  export-validate:
+    name: Export DA3METRIC-LARGE → ONNX and validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HEIGHT: ${{ github.event.inputs.height || '504' }}
+      WIDTH: ${{ github.event.inputs.width || '504' }}
+      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HUGGING_FACE_HUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache HuggingFace hub
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-da3metric-large-v2
+
+      - name: Install PyTorch (CPU) + pipeline deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch>=2" torchvision --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r tools/requirements.txt
+
+      - name: Install Depth Anything 3 (source, no deps)
+        run: |
+          git clone --depth 1 https://github.com/ByteDance-Seed/Depth-Anything-3 "$RUNNER_TEMP/da3"
+          pip install -e "$RUNNER_TEMP/da3" --no-deps
+
+      - name: Export ONNX (FP16 with FP32 fallback)
+        run: |
+          python tools/export_onnx.py \
+            --height "$HEIGHT" --width "$WIDTH" \
+            --output build/model/DA3METRIC-LARGE.onnx --fp16
+
+      - name: Validate export fidelity (gate)
+        run: |
+          python tools/validate_onnx.py \
+            --onnx build/model/DA3METRIC-LARGE.onnx \
+            --height 224 --width 224 \
+            --max-rel-error 0.05 --min-corr 0.99
+
+      - name: Show model sizes
+        if: always()
+        run: ls -lh build/model/ || true
+
+      - name: Upload ONNX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: da3metric-large-onnx
+          path: |
+            build/model/DA3METRIC-LARGE.onnx
+            build/model/DA3METRIC-LARGE.onnx.json
+            build/model/validation.json
+          if-no-files-found: error
+          retention-days: 14

@@ -24,19 +24,26 @@ assumes an ACEScg working space.
 ```
 ACEScg RGBA float in
    └─▶ ACEScg → sRGB (AP1→Rec.709 primaries + sRGB transfer)
-        └─▶ ImageNet normalize, resize to a multiple of 14 (DINOv2 patch size)
-             └─▶ ONNX Runtime (CoreML EP) → canonical depth + camera intrinsics
-                  └─▶ decimeters = focal_px × depth / 30   (focal: predicted or manual override)
+        └─▶ resize to a multiple of 14 (DINOv2 patch size); feed [0,1] RGB
+             (ImageNet normalization is baked into the ONNX graph)
+             └─▶ ONNX Runtime (CoreML EP) → metric depth + sky
+                  └─▶ decimeters = 10 × depth × gain   (optional manual scale)
                        └─▶ bilinear upsample to source resolution
                             └─▶ float32 Z written to output (grayscale)
 ```
 
 ### The metric scaling
 
-`DA3METRIC-LARGE` emits **focal-normalized (canonical) depth**, not meters. The documented
-conversion is `meters = focal_px × output / 300`, hence **`decimeters = focal_px × output / 30`**.
-The focal length in pixels comes from the model's **predicted intrinsics** by default, with a
-**manual override** parameter for known camera geometry.
+`DA3METRIC-LARGE` is fine-tuned for **metric** monocular depth: its `depth` output (as produced
+by the reference `inference()`) is the metric depth we consume directly, so
+**`decimeters = 10 × depth`** (with an optional user `gain` for correction). The exact scale is
+characterised in CI by `tools/validate_onnx.py`.
+
+Note: this checkpoint does **not** predict camera intrinsics in monocular mode
+(`inference().intrinsics` is `None`), so there is no focal-length/intrinsics path — a manual
+scale/gain parameter covers correction instead. The model also emits a **`sky`** output, which the
+plugin uses to handle sky regions (the model's internal sky-depth clamp is removed for export
+because it is not ONNX-representable).
 
 ### Resource / "VRAM" control
 
