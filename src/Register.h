@@ -10,4 +10,6 @@
 namespace da3reg {
 // Appends the MoGe focal-length plugin factory to the host's plugin list.
 void appendMoGe(OFX::PluginFactoryArray& ids);
+// Appends the Lens Distortion plugin factory to the host's plugin list.
+void appendLensDistortion(OFX::PluginFactoryArray& ids);
 }  // namespace da3reg

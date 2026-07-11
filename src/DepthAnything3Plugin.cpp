@@ -461,7 +461,8 @@ void getPluginIDs(OFX::PluginFactoryArray& ids) {
   static DepthAnything3Factory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
   ids.push_back(&p);
 #if DA3_WITH_ONNX
-  da3reg::appendMoGe(ids);  // second plugin in the same bundle
+  da3reg::appendMoGe(ids);             // second plugin in the same bundle
+  da3reg::appendLensDistortion(ids);   // third plugin
 #endif
 }
 }  // namespace Plugin

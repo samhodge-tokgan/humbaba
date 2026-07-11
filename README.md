@@ -23,6 +23,21 @@ The single `.ofx.bundle` provides two plugins (sharing the ONNX Runtime/CoreML s
   parameters (focal px, horizontal/vertical FOV, principal point) you can link to a camera.
   DA3 doesn't predict intrinsics, so MoGe covers that gap. (MoGe runs on CPU — its dynamic graph
   isn't CoreML-executable; the depth plugin uses CoreML.)
+- **Lens Distortion** — holds Brown-Conrady distortion parameters and outputs the downstream lens
+  data: **OpenCV coefficients**, **3DEqualizer** coefficients (Radial Std Deg 4), and the
+  **overscan / padding** needed to render CG that will be re-distorted to the plate. It does *not*
+  apply distortion — the image passes through. Overscan is validated against OpenCV
+  (`getOptimalNewCameraMatrix`). Distortion parameters are entered manually or from a sidecar
+  (there is no standard OFX lens-metadata channel, so passthrough = parameter override); an
+  optional ML estimator hook is present — see note below.
+
+> **Lens Distortion — ML estimation status:** the deterministic parts (overscan, OpenCV↔3DE
+> conversion, live outputs) are complete and tested. Automatic *estimation* of distortion from a
+> natural image is a pluggable ONNX hook but **no model is bundled**: the strong single-image
+> calibration models (AnyCalib, GeoCalib — both permissively licensed) embed a nonlinear solver
+> that must be reimplemented host-side, and the feed-forward Deep-BrownConrady (MIT) ships no
+> trained weights. Wiring one of these in is the next step; today you enter parameters manually or
+> from a sidecar and the overscan/3DE outputs update live.
 
 ## Install
 
