@@ -244,9 +244,10 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$DA3_MODEL" || { echo "model not staged at $DA3_MODEL"; exit 1; }
-          # The CUDA provider libs live next to ort_check's bundled ORT.
-          LIB="$PWD/build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64"
-          OUT="$(LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}" ./build/ort_check "$DA3_MODEL")"
+          # ort_check has BUILD_RPATH=${ORT_DIR}/lib, so it resolves libonnxruntime.so.1
+          # and its sibling CUDA provider libs directly; CUDA/cuDNN are on the ldconfig
+          # path. No bundle assembly (hence no patchelf) needed for this smoke test.
+          OUT="$(./build/ort_check "$DA3_MODEL")"
           echo "$OUT"
           case "$OUT" in *"CUDA EP available: YES"*) ;; *) echo "CUDA EP not available on the runner"; exit 1;; esac
           case "$OUT" in *"session created (CUDA)"*) ;; *) echo "session did not run on CUDA (CPU fallback?)"; exit 1;; esac
