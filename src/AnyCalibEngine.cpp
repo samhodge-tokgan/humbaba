@@ -132,7 +132,7 @@ AnyCalibEngine::AnyCalibEngine(const std::string& model_path, ComputeUnits units
       } catch (const Ort::Exception&) { return false; }
     }
     try {
-      impl_->session = std::make_unique<Ort::Session>(impl_->env, model_path.c_str(), so);
+      impl_->session = std::make_unique<Ort::Session>(impl_->env, da3::OrtPath(model_path).c_str(), so);
       return true;
     } catch (const Ort::Exception& e) {
       last_error_ = std::string("AnyCalib session create failed: ") + e.what();

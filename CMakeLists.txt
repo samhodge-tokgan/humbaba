@@ -53,6 +53,12 @@ if(DA3_WITH_ONNX)
     set(ORT_HASH_ARG URL_HASH SHA256=e42b77a7281cc6e55141bf44fcfbac2c782b823a491bbb6ac33c781dd991f8a6)
     set(ORT_SHLIB "lib/libonnxruntime.${DA3_ORT_VERSION}.dylib")
     set(DA3_ACCEL "CoreML")
+  elseif(WIN32)
+    set(ORT_URL "${ORT_BASE}/onnxruntime-win-x64-gpu_cuda12-${DA3_ORT_VERSION}.zip")
+    # (hash added once pinned; FetchContent fetches without it meanwhile)
+    set(ORT_SHLIB "lib/onnxruntime.dll")          # runtime (IMPORTED_LOCATION)
+    set(ORT_IMPLIB "lib/onnxruntime.lib")         # import lib (IMPORTED_IMPLIB)
+    set(DA3_ACCEL "CUDA")
   elseif(UNIX)  # Linux
     set(ORT_URL "${ORT_BASE}/onnxruntime-linux-x64-gpu_cuda12-${DA3_ORT_VERSION}.tgz")
     # (hash added once pinned; FetchContent fetches without it meanwhile)
@@ -72,6 +78,11 @@ if(DA3_WITH_ONNX)
     IMPORTED_LOCATION "${ORT_DYLIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${ORT_DIR}/include"
   )
+  if(WIN32)
+    # On Windows link against the import library; IMPORTED_LOCATION is the DLL.
+    set_target_properties(onnxruntime PROPERTIES
+      IMPORTED_IMPLIB "${ORT_DIR}/${ORT_IMPLIB}")
+  endif()
   message(STATUS "ONNX Runtime accelerator EP: ${DA3_ACCEL}")
 endif()
 
@@ -105,6 +116,11 @@ if(APPLE)
   set(OFX_LIB_DIR "Frameworks")    # bundled shared libs
   set(OFX_RPATH "@loader_path/../Frameworks")
   set(OFX_LIB_BUNDLED "libonnxruntime.1.dylib")
+elseif(WIN32)
+  set(OFX_ARCH_DIR "Win64")        # Contents/Win64/*.ofx (OFX-spec arch dir)
+  set(OFX_LIB_DIR "Win64")         # DLLs alongside the .ofx
+  set(OFX_RPATH "")                # Windows has no rpath; DLLs found via loader dir
+  set(OFX_LIB_BUNDLED "onnxruntime.dll")
 else()                             # Linux
   # OFX packaging spec: the 64-bit Linux arch dir is "Linux-x86-64" (hyphens).
   # Using an underscore makes OFX hosts (Natron) silently skip the binary.
@@ -138,13 +154,26 @@ if(DA3_WITH_ONNX)
     src/LensDistortionPlugin.cpp
     src/AnyCalibEngine.cpp
   )
+  if(WIN32)
+    # onnxruntime.dll and its dependents live next to the .ofx (Contents/Win64),
+    # which the loader does NOT search by default for a LoadLibrary'd plugin.
+    # WinLoader.cpp (DllMain) adds that directory to the DLL search path, and
+    # delay-loading onnxruntime.dll defers its resolution until after DllMain runs.
+    target_sources(DepthAnything3 PRIVATE src/WinLoader.cpp)
+    target_link_libraries(DepthAnything3 PRIVATE delayimp)
+    target_link_options(DepthAnything3 PRIVATE /DELAYLOAD:onnxruntime.dll)
+    # MSVC's <cmath> only defines M_PI when _USE_MATH_DEFINES is set beforehand.
+    target_compile_definitions(DepthAnything3 PRIVATE _USE_MATH_DEFINES NOMINMAX)
+  endif()
   target_link_libraries(DepthAnything3 PRIVATE onnxruntime)
   target_compile_definitions(DepthAnything3 PRIVATE DA3_WITH_ONNX=1)
   # Find the bundled shared library relative to the .ofx binary at runtime.
-  set_target_properties(DepthAnything3 PROPERTIES
-    BUILD_WITH_INSTALL_RPATH ON
-    INSTALL_RPATH "${OFX_RPATH}"
-  )
+  if(NOT WIN32)
+    set_target_properties(DepthAnything3 PROPERTIES
+      BUILD_WITH_INSTALL_RPATH ON
+      INSTALL_RPATH "${OFX_RPATH}"
+    )
+  endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -182,10 +211,14 @@ if(DA3_WITH_ONNX)
     COMMENT "Bundling ONNX Runtime shared library"
     VERBATIM
   )
-  # On Linux the CUDA EP lives in a separate shared library (libonnxruntime_providers_cuda.so)
-  # plus a shared provider lib; bundle them alongside so the EP loads.
-  if(NOT APPLE)
+  # The CUDA EP lives in separate provider shared libraries (cuda/tensorrt/shared);
+  # bundle them alongside the .ofx so the EP loads. (Linux: .so, Windows: .dll.)
+  if(WIN32)
+    file(GLOB ORT_PROVIDER_LIBS "${ORT_DIR}/lib/onnxruntime_providers_*.dll")
+  elseif(NOT APPLE)
     file(GLOB ORT_PROVIDER_LIBS "${ORT_DIR}/lib/libonnxruntime_providers_*.so")
+  endif()
+  if(NOT APPLE)
     foreach(pl ${ORT_PROVIDER_LIBS})
       add_custom_command(TARGET DepthAnything3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy "${pl}" "${BUNDLE_DIR}/Contents/${OFX_LIB_DIR}/"
@@ -235,10 +268,20 @@ endif()
 if(DA3_WITH_ONNX)
   add_executable(ort_check tests/ort_check.cpp)
   target_link_libraries(ort_check PRIVATE onnxruntime)
-  set_target_properties(ort_check PROPERTIES
-    BUILD_RPATH "${ORT_DIR}/lib"
-    INSTALL_RPATH "${ORT_DIR}/lib"
-  )
+  if(WIN32)
+    # No rpath on Windows: copy the ORT DLLs next to ort_check.exe so it can run.
+    file(GLOB ORT_ALL_DLLS "${ORT_DIR}/lib/*.dll")
+    foreach(dll ${ORT_ALL_DLLS})
+      add_custom_command(TARGET ort_check POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:ort_check>"
+        VERBATIM)
+    endforeach()
+  else()
+    set_target_properties(ort_check PROPERTIES
+      BUILD_RPATH "${ORT_DIR}/lib"
+      INSTALL_RPATH "${ORT_DIR}/lib"
+    )
+  endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -248,6 +291,9 @@ endif()
 if(NOT DEFINED OFX_INSTALL_DIR)
   if(APPLE)
     set(OFX_INSTALL_DIR "$ENV{HOME}/Library/OFX/Plugins")
+  elseif(WIN32)
+    # Standard OFX plugin location on Windows.
+    set(OFX_INSTALL_DIR "$ENV{CommonProgramFiles}/OFX/Plugins")
   else()  # Linux
     set(OFX_INSTALL_DIR "$ENV{HOME}/OFX/Plugins")
   endif()

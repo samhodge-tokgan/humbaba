@@ -5,12 +5,21 @@
 // CoreML on macOS, CUDA on Linux/Windows (with the caller's CPU fallback).
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 
 #include <onnxruntime_cxx_api.h>
 
 namespace da3 {
+
+// Ort::Session takes a path of type const ORTCHAR_T* — wchar_t on Windows, char on
+// POSIX. std::filesystem::path::c_str() yields exactly that native type, so this
+// converts a UTF-8/native std::string path for the Session constructor. Keep the
+// returned object alive across the c_str() use (it is, within a full expression).
+inline std::filesystem::path OrtPath(const std::string& s) {
+  return std::filesystem::path(s);
+}
 
 inline const char* AcceleratorSubstr() {
 #ifdef __APPLE__

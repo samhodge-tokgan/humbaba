@@ -116,3 +116,47 @@ jobs:
           name: DepthAnything3-ofx-bundle-linux
           path: build/DepthAnything3.ofx.bundle
           if-no-files-found: error
+
+  build-windows:
+    name: Build .ofx bundle (ONNX/CUDA, Windows x64)
+    runs-on: windows-latest   # CPU-only runner: validates the MSVC build, Win64
+                              # bundle layout, and that the CUDA-enabled ORT links.
+                              # Actual GPU inference is verified on a self-hosted
+                              # CUDA box (see docs/WINDOWS.md).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (ONNX Runtime CUDA package, MSVC)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DDA3_WITH_ONNX=ON
+          cmake --build build --config Release --target ort_check DepthAnything3 --parallel
+
+      - name: Verify Win64 bundle layout, DLLs and OFX exports
+        shell: pwsh
+        run: |
+          $arch = "build/DepthAnything3.ofx.bundle/Contents/Win64"
+          foreach ($f in @("DepthAnything3.ofx","onnxruntime.dll",
+                           "onnxruntime_providers_cuda.dll","onnxruntime_providers_shared.dll")) {
+            if (!(Test-Path "$arch/$f")) { throw "missing $f" }
+          }
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio","${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
+            -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $exports = & $dumpbin.FullName /exports "$arch/DepthAnything3.ofx"
+          if ($exports -notmatch "OfxGetNumberOfPlugins") { throw "missing OfxGetNumberOfPlugins export" }
+          if ($exports -notmatch "OfxGetPlugin") { throw "missing OfxGetPlugin export" }
+          Write-Host "Win64 bundle + OFX exports OK"
+
+      - name: Verify CUDA EP compiled into the ORT package
+        shell: pwsh
+        run: |
+          $out = & build/Release/ort_check.exe
+          $out
+          if ($out -notmatch "CUDAExecutionProvider") { throw "CUDA EP missing from ORT package" }
+
+      - name: Upload Windows bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DepthAnything3-ofx-bundle-windows
+          path: build/DepthAnything3.ofx.bundle
+          if-no-files-found: error

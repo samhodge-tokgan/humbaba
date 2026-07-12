@@ -3,20 +3,21 @@
 A hardware-accelerated **OpenFX** plugin that predicts **metric depth** from an image using
 **[Depth Anything 3](https://depth-anything-3.github.io/)** (the `DA3METRIC-LARGE` checkpoint),
 run through **ONNX Runtime** — the **CoreML execution provider** on Apple Silicon and the
-**CUDA execution provider** on Linux (NVIDIA), with automatic CPU fallback.
+**CUDA execution provider** on Linux and Windows (NVIDIA), with automatic CPU fallback.
 
 - **Input:** RGB(A) frame buffer, assumed to be **ACEScg** (linear, AP1 primaries).
 - **Output:** a same-size **float32 grayscale depth (Z) map in decimeters**.
 - **Acceleration:** ONNX Runtime — CoreML EP (Apple Neural Engine / GPU / CPU) on macOS,
-  CUDA EP on Linux x86-64; CPU fallback everywhere.
-- **Host tested:** [Natron](https://www.natrongithub.com/) on an Apple M1 (CoreML) and on
-  Rocky Linux 8 with RTX 3090s (CUDA).
+  CUDA EP on Linux x86-64 and Windows x64; CPU fallback everywhere.
+- **Host tested:** [Natron](https://www.natrongithub.com/) on an Apple M1 (CoreML), on
+  Rocky Linux 8 with RTX 3090s (CUDA), and on Windows 11 with RTX 3090s (CUDA).
 
-> Status: **working end-to-end** on **Apple Silicon** (ACEScg → CoreML depth → decimeter Z)
-> and on **Linux x86-64 / NVIDIA CUDA** (verified in headless Natron). See
-> [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), Linux build/deploy in
-> [`docs/LINUX.md`](docs/LINUX.md), packaging in [`packaging/README.md`](packaging/README.md),
-> and the milestone roadmap below.
+> Status: **working end-to-end** on **Apple Silicon** (ACEScg → CoreML depth → decimeter Z),
+> **Linux x86-64 / NVIDIA CUDA**, and **Windows x64 / NVIDIA CUDA** — all verified in headless
+> Natron, producing numerically matching depth. See
+> [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), platform build/deploy notes in
+> [`docs/LINUX.md`](docs/LINUX.md) and [`docs/WINDOWS.md`](docs/WINDOWS.md), packaging in
+> [`packaging/README.md`](packaging/README.md), and the milestone roadmap below.
 
 ## Plugins in this bundle
 

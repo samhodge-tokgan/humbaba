@@ -99,7 +99,7 @@ DepthEngine::DepthEngine(const std::string& model_path, ComputeUnits units,
   }
 
   try {
-    impl_->session = std::make_unique<Ort::Session>(impl_->env, model_path.c_str(), so);
+    impl_->session = std::make_unique<Ort::Session>(impl_->env, da3::OrtPath(model_path).c_str(), so);
   } catch (const Ort::Exception& e) {
     // The accelerator EP can fail at session-creation time (not at append) if its
     // runtime libraries are missing/incompatible — e.g. on Linux when the CUDA
@@ -113,7 +113,7 @@ DepthEngine::DepthEngine(const std::string& model_path, ComputeUnits units,
       if (intra_threads > 0) cpu_so.SetIntraOpNumThreads(intra_threads);
       used_coreml = false;
       try {
-        impl_->session = std::make_unique<Ort::Session>(impl_->env, model_path.c_str(), cpu_so);
+        impl_->session = std::make_unique<Ort::Session>(impl_->env, da3::OrtPath(model_path).c_str(), cpu_so);
       } catch (const Ort::Exception& e2) {
         last_error_ = std::string("session create failed: ") + e2.what();
         impl_->session.reset();

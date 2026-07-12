@@ -162,7 +162,23 @@ class DepthAnything3Plugin : public OFX::ImageEffect {
 // Locate DA3METRIC-LARGE.onnx inside the plugin bundle's Contents/Resources, by
 // finding this binary's own path via dladdr.
 static std::string bundleModelPath() {
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(_WIN32)
+  HMODULE hm = nullptr;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(&bundleModelPath), &hm)) {
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(hm, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+      std::string p(buf, n);  // ...\Contents\Win64\DepthAnything3.ofx
+      auto pos = p.rfind("\\Contents\\Win64\\");
+      if (pos != std::string::npos) {
+        std::string cand = p.substr(0, pos) + "\\Contents\\Resources\\DA3METRIC-LARGE.onnx";
+        if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) return cand;
+      }
+    }
+  }
+#elif defined(__APPLE__) || defined(__linux__)
 #if defined(__APPLE__)
   const std::string marker = "/Contents/MacOS/";
 #else

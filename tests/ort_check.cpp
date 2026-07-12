@@ -7,6 +7,7 @@
 //                                one inference, reporting timing + output stats.
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -66,7 +67,10 @@ int main(int argc, char** argv) {
 
   std::unique_ptr<Ort::Session> sess;
   try {
-    sess = std::make_unique<Ort::Session>(env, model.c_str(), so);
+    // Ort::Session wants const ORTCHAR_T* (wchar_t on Windows); filesystem::path
+    // ::c_str() yields the native char type on each platform.
+    std::filesystem::path model_path(model);
+    sess = std::make_unique<Ort::Session>(env, model_path.c_str(), so);
   } catch (const Ort::Exception& e) {
     std::cout << "  session create FAILED: " << e.what() << "\n";
     return 2;

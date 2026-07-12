@@ -24,10 +24,20 @@ provider. Port status:
   self-hosted step). CUDA runtime deps documented as a host prerequisite in
   [`docs/LINUX.md`](LINUX.md) (bundling them is impractical: ~1 GB + cuDNN's multi-GB
   sublibs, on top of the 1.3 GB model).
-- **Windows 11** — GPU (CUDA and/or DirectML EP) and CPU builds. NOT STARTED —
-  needs a Windows machine. `.ofx.bundle` uses `Contents/Win64/`; ORT DLL + provider
-  DLLs alongside the `.ofx`; MSVC/CMake build; the `dladdr`-based bundle-path lookup
-  needs a `GetModuleFileName`/`GetModuleHandleEx` equivalent for Win64.
+- **Windows 11 — GPU (CUDA EP): DONE + END-TO-END VERIFIED.** Built with MSVC / Visual
+  Studio 2022 (CUDA 12.8, cuDNN 9.8) on a Windows 11 box with 2× RTX 3090. CMake emits
+  the `Contents/Win64/` bundle with `onnxruntime.dll` + CUDA/TensorRT provider DLLs.
+  The `.ofx` delay-loads `onnxruntime.dll` and a DllMain hook ([`src/WinLoader.cpp`])
+  loads it by full path from the bundle dir, so the plugin is self-contained without
+  perturbing the host's DLL search. Bundle-path lookup uses `GetModuleHandleExW`/
+  `GetModuleFileNameA`; ORT session paths go through `da3::OrtPath` (Windows ORT wants
+  `const wchar_t*`). Verified: `ort_check` runs DA3 on CUDA (504×504 ~92 ms); all 3
+  plugins load in headless Natron and render a full-res metric-depth EXR numerically
+  matching Linux/macOS. cuDNN 9 is a host prerequisite (install to CUDA `bin`; see
+  [`docs/WINDOWS.md`](WINDOWS.md)). Open item: Natron 2.5.0 raises an access violation
+  during **shutdown** (after the output is written) — teardown/ordering with the ORT/
+  CUDA runtime; does not affect output. DirectML EP (for non-NVIDIA GPUs) not pursued
+  since the target has NVIDIA hardware.
 
 Notes / scope:
 - The universal-vs-arm64 constraint (CoreML → arm64-only) is macOS-specific; other

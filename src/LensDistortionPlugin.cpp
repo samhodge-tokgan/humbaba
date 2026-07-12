@@ -10,6 +10,11 @@
 // Note: there is no standard OFX mechanism to read lens metadata from a clip, so
 // "metadata passthrough" is realized as manual/sidecar parameter override here.
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -40,7 +45,23 @@ static inline void ld_acescgToSrgb(float r, float g, float b, float* o) {
   o[0] = ld_srgb(lr); o[1] = ld_srgb(lg); o[2] = ld_srgb(lb);
 }
 static std::string ld_bundleModel() {
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(_WIN32)
+  HMODULE hm = nullptr;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(&ld_bundleModel), &hm)) {
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(hm, buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+      std::string p(buf, n);
+      auto pos = p.rfind("\\Contents\\Win64\\");
+      if (pos != std::string::npos) {
+        std::string cand = p.substr(0, pos) + "\\Contents\\Resources\\anycalib_dist.onnx";
+        if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) return cand;
+      }
+    }
+  }
+#elif defined(__APPLE__) || defined(__linux__)
 #if defined(__APPLE__)
   const std::string marker = "/Contents/MacOS/";
 #else
