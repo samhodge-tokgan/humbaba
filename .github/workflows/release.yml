@@ -57,9 +57,11 @@ jobs:
           VERSION: ${{ github.event.inputs.version || github.ref_name }}
         run: |
           V="${VERSION#v}"; [ -n "$V" ] || V="0.5.0"
-          cp tools/fetch_models.sh build/DepthAnything3.ofx.bundle/Contents/fetch_models.sh
+          # Pass fetch_models.sh via --extra-contents so make_pkg.sh injects it into
+          # the bundle AFTER code-signing (a loose file in Contents/ breaks the sign).
           packaging/make_pkg.sh --bundle build/DepthAnything3.ofx.bundle \
-            --out "dist/DepthAnything3-$V-macos-arm64.pkg" --version "$V"
+            --out "dist/DepthAnything3-$V-macos-arm64.pkg" --version "$V" \
+            --extra-contents tools/fetch_models.sh
 
       - name: Package (Linux .tar.xz)
         if: matrix.platform == 'linux'

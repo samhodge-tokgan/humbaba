@@ -1,21 +1,35 @@
 # Development guide
 
-## Target platform
+## Target platforms
 
-Primary development + test target: **Apple Silicon (M1), macOS 26.x**, inference via
-**ONNX Runtime CoreML execution provider**. The plugin binary is built **universal
-(arm64 + x86_64)** so it loads in either a native-arm64 or a Rosetta (x86_64) OFX host.
+The plugin is fully supported on **three OS / accelerator combinations**, all built from the same
+CMake project and verified end-to-end in headless Natron with numerically matching depth:
+
+| OS | Arch | Accelerator (ONNX Runtime EP) | Compiler | Bundle arch dir |
+|----|------|-------------------------------|----------|-----------------|
+| **macOS** (primary dev target) | arm64 (universal arm64+x86_64) | **CoreML** (ANE/GPU/CPU) | Apple clang | `Contents/MacOS` |
+| **Linux** (Rocky 8 verified) | x86-64 | **CUDA 12** (NVIDIA) | gcc/g++ (8.5+) | `Contents/Linux-x86-64` |
+| **Windows** (11 verified) | x64 | **CUDA 12** (NVIDIA) | MSVC / VS 2022 | `Contents/Win64` |
+
+Accelerator selection is automatic (`src/OrtAccel.h`: CoreML on macOS, CUDA device 0 on
+Linux/Windows) with **CPU fallback** if the accelerator session can't be created. On macOS the
+binary is built **universal (arm64 + x86_64)** so it loads in a native-arm64 or Rosetta host; the
+CoreML-enabled ORT is arm64, so the inference-enabled build is arm64. Platform specifics live in
+[`LINUX.md`](LINUX.md), [`WINDOWS.md`](WINDOWS.md), and [`HOST_COMPATIBILITY.md`](HOST_COMPATIBILITY.md);
+GPU-CI runner setup in [`CI_RUNNERS.md`](CI_RUNNERS.md).
 
 ## Pinned versions
 
 | Component | Version / source | Notes |
 |-----------|------------------|-------|
-| OpenFX API + Support lib | `AcademySoftwareFoundation/openfx` **v1.5.x** | vendored in M2 |
-| ONNX Runtime | **1.20.x** (arm64/universal, CoreML EP) | verify `GetAvailableProviders()` lists CoreML |
-| Model | `depth-anything/DA3METRIC-LARGE` | Apache-2.0, ViT-L, patch 14 |
-| Natron (test host) | **arm64** RB-2.6 build at `/Applications/Natron-2.6-arm64.app` | native Apple Silicon; x86_64 Natron 2.5.0 kept alongside |
-| CMake | ≥ 3.20 (installed 4.4.0) | |
-| Python | ≥ 3.10 (miniconda 3.13 present) | model export/validation only |
+| OpenFX API + Support lib | `AcademySoftwareFoundation/openfx` **v1.5.1** | fetched via CMake FetchContent |
+| ONNX Runtime | **1.27.1** | per-OS package: CoreML arm64 (macOS), `gpu_cuda12` x64 (Linux), `win-x64-gpu_cuda12` (Windows) |
+| CUDA / cuDNN (Linux, Windows) | **CUDA 12.x + cuDNN 9** | host prerequisite on the loader path for the CUDA EP; not bundled (too large) |
+| Model | `depth-anything/DA3METRIC-LARGE` | Apache-2.0, ViT-L, patch 14; distributed under the `models-v1` release tag |
+| Natron (test hosts) | macOS: **arm64** RB-2.6; Linux/Windows: portable **2.5.0** | headless `NatronRenderer` drives CI/local checks on each OS |
+| CMake | ≥ 3.20 | |
+| Compilers | Apple clang (macOS), gcc 8.5+ (Linux), MSVC 19.4x / VS 2022 (Windows) | GCC < 9 links `stdc++fs` automatically |
+| Python | ≥ 3.10 | model export/validation only |
 
 ## Local prerequisites
 
@@ -27,6 +41,11 @@ Still required before the model/build milestones:
 1. **Free disk space** — keep ~15–20 GB clear (model weights + ONNX Runtime + build tree).
 2. **arm64 Natron** — download a native/universal build from the NatronGitHub releases page into
    `/Applications` for testing the plugin without Rosetta.
+
+For **Linux** and **Windows** dev/build machines the prerequisites differ (NVIDIA driver + CUDA
+12.x runtime + cuDNN 9, gcc/patchelf on Linux, VS 2022 on Windows) — see [`LINUX.md`](LINUX.md)
+and [`WINDOWS.md`](WINDOWS.md) for the full per-OS setup, and [`CI_RUNNERS.md`](CI_RUNNERS.md) for
+standing up a GPU CI runner.
 
 ### Git remote note (two-account machine)
 
@@ -59,9 +78,11 @@ git config --local url."https://github.com/samhodge-tokgan/".insteadOf "https://
 
 ## Milestone workflow
 
-Each milestone (M0–M5) is one branch → PR → self-review → merge to `main`. Every PR that changes
+Each milestone (M0–M9) is one branch → PR → self-review → merge to `main`. Every PR that changes
 plugin runtime behavior is exercised end-to-end before merge (build, load in Natron, inspect
-output). See the roadmap table in the README.
+output). M6–M8 added the MoGe Focal, Lens Distortion, and AnyCalib estimator plugins; **M9** added
+the Linux + Windows CUDA ports, library isolation, model-less installers, and real-GPU CI. See the
+roadmap table in the README.
 
 ## Headless testing (Natron)
 

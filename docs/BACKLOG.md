@@ -1,11 +1,13 @@
 # Backlog
 
-Post-MVP work, not yet scheduled.
+Post-MVP work. The cross-platform ports below are **complete and merged** (M9) and kept here as a
+record; the remaining sections (AnyCalib accuracy, lens metadata, and the deferred items at the
+bottom) are the genuinely open work.
 
-## Cross-platform ports (Windows 11, Rocky Linux 8) — GPU + CPU
+## Cross-platform ports (Windows 11, Rocky Linux 8) — GPU + CPU — ✅ DONE (M9)
 
-The current build targets **macOS arm64** with the ONNX Runtime **CoreML** execution
-provider. Port status:
+The plugin ships on **macOS/arm64 (CoreML)**, **Linux/x86-64 (CUDA)**, and **Windows/x64 (CUDA)**,
+all with automatic CPU fallback, from one cross-platform CMake project. Port status:
 
 - **Rocky Linux 8 — GPU (CUDA EP): DONE + HARDENED + END-TO-END VERIFIED.** Built on
   a 2× RTX 3090 VM (CUDA 12.6, cuDNN 9, gcc-toolset-12). Cross-platform CMake emits
@@ -43,7 +45,8 @@ Notes / scope:
 - The universal-vs-arm64 constraint (CoreML → arm64-only) is macOS-specific; other
   platforms build for their native arch without that restriction.
 - MoGe and AnyCalib run on **CPU** on macOS (dynamic graphs not CoreML-executable);
-  on Linux they now *attempt* CUDA first (with CPU fallback) via `OrtAccel.h`.
+  on **Linux and Windows** they *attempt* CUDA first (with CPU fallback) via `OrtAccel.h`.
+  DA3 uses the platform accelerator (CoreML/CUDA) on every OS.
 
 ## AnyCalib distortion accuracy
 
