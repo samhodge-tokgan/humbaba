@@ -185,27 +185,40 @@ jobs:
 
   gpu-smoke:
     name: GPU inference smoke (self-hosted CUDA)
-    # Runs on a self-hosted Windows box with NVIDIA GPUs (2x RTX 3090, CUDA 12.8,
-    # cuDNN 9 on PATH). GitHub-hosted runners have no GPU, so this is the only job
-    # that exercises ACTUAL CUDA inference + cross-platform depth parity.
+    # Runs on a self-hosted box with an NVIDIA GPU (CUDA 12.x, cuDNN 9 on the loader
+    # path). GitHub-hosted runners have no GPU, so this is the only job that exercises
+    # ACTUAL CUDA inference + cross-platform depth parity. The `cuda` label may be on a
+    # Windows box (RTX 3090s, VS 2022) or a Rocky Linux 8 box — the steps below branch
+    # on runner.os so either can service it. See docs/CI_RUNNERS.md for runner setup.
     runs-on: [self-hosted, cuda]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build ort_check (CUDA ORT)
+      # ---- Build ort_check (one step per OS) ----
+      - name: Build ort_check (Windows, VS 2022)
         # Windows PowerShell 5.1 (powershell.exe, always in System32) — the runner
         # service account (NETWORK SERVICE) has no pwsh (PowerShell 7) on its PATH.
+        if: runner.os == 'Windows'
         shell: powershell
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DDA3_WITH_ONNX=ON
           cmake --build build --config Release --target ort_check --parallel
 
-      - name: Run DA3 on GPU + assert CUDA + depth parity
+      - name: Build ort_check (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ort_check -j"$(nproc)"
+
+      # ---- Run + assert (one step per OS; identical checks) ----
+      - name: Run DA3 on GPU + assert CUDA + depth parity (Windows)
+        if: runner.os == 'Windows'
         shell: powershell
         env:
-          # Model is pre-staged on the runner (see docs/HOST_COMPATIBILITY.md); it is
-          # not re-downloaded each run. Override with the DA3_MODEL repo/runner var.
-          DA3_MODEL: ${{ vars.DA3_MODEL || 'C:\dev\da3-models\DA3METRIC-LARGE-dyn.onnx' }}
+          # Model is pre-staged on the runner (see docs/CI_RUNNERS.md); it is not
+          # re-downloaded each run. Override with the DA3_MODEL repo/runner var.
+          DA3_MODEL: ${{ vars.DA3_MODEL_WIN || 'C:\dev\da3-models\DA3METRIC-LARGE-dyn.onnx' }}
         run: |
           if (-not (Test-Path $env:DA3_MODEL)) { throw "model not staged at $env:DA3_MODEL" }
           $out = (& build/Release/ort_check.exe $env:DA3_MODEL | Out-String)
@@ -220,3 +233,25 @@ jobs:
             throw "depth mean $mean out of parity tolerance (expected ~0.7026)"
           }
           Write-Host "GPU smoke OK: CUDA session created and depth parity holds."
+
+      - name: Run DA3 on GPU + assert CUDA + depth parity (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          # Model is pre-staged on the runner (see docs/CI_RUNNERS.md). Override with
+          # the DA3_MODEL_LINUX repo/runner var.
+          DA3_MODEL: ${{ vars.DA3_MODEL_LINUX || '/opt/da3-models/DA3METRIC-LARGE-dyn.onnx' }}
+        run: |
+          set -euo pipefail
+          test -f "$DA3_MODEL" || { echo "model not staged at $DA3_MODEL"; exit 1; }
+          # The CUDA provider libs live next to ort_check's bundled ORT.
+          LIB="$PWD/build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64"
+          OUT="$(LD_LIBRARY_PATH="$LIB:${LD_LIBRARY_PATH:-}" ./build/ort_check "$DA3_MODEL")"
+          echo "$OUT"
+          case "$OUT" in *"CUDA EP available: YES"*) ;; *) echo "CUDA EP not available on the runner"; exit 1;; esac
+          case "$OUT" in *"session created (CUDA)"*) ;; *) echo "session did not run on CUDA (CPU fallback?)"; exit 1;; esac
+          MEAN="$(printf '%s' "$OUT" | sed -nE 's/.*mean=([0-9.]+).*/\1/p' | head -1)"
+          test -n "$MEAN" || { echo "could not parse depth mean from ort_check output"; exit 1; }
+          echo "depth mean = $MEAN (expected ~0.7026, cross-platform parity)"
+          awk -v m="$MEAN" 'BEGIN{ d=m-0.7026; if (d<0) d=-d; if (d>0.01){ print "depth mean "m" out of parity tolerance"; exit 1 } }'
+          echo "GPU smoke OK: CUDA session created and depth parity holds."
