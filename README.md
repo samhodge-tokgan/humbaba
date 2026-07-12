@@ -1,4 +1,4 @@
-# openfx-onnx-depthanything3
+# Depth Anything 3 — OpenFX plugin
 
 A hardware-accelerated **OpenFX** plugin that predicts **metric depth** from an image using
 **[Depth Anything 3](https://depth-anything-3.github.io/)** (the `DA3METRIC-LARGE` checkpoint),
