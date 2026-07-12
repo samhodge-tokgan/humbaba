@@ -24,10 +24,11 @@ bash /Library/OFX/Plugins/DepthAnything3.ofx.bundle/Contents/fetch_models.sh
 powershell -File "%CommonProgramFiles%\OFX\Plugins\DepthAnything3.ofx.bundle\Contents\fetch_models.ps1"
 ```
 
-The scripts prefer `gh release download` (auth, for the private repo) and fall back to `curl` with
-`GITHUB_TOKEN`. Override the model set with `DA3_MODELS_TAG` / `DA3_MODELS_BASE_URL`. You can also
-skip the fetch entirely and point the plugin's *Model file* parameter (or `DA3_MODEL_PATH`) at a
-model you already have.
+The repo is **public**, so the scripts download the models with a plain anonymous `curl` of the
+release URL — no auth needed. (They still use `gh release download` when the CLI is present, and a
+`GITHUB_TOKEN` is optional, only to lift API rate limits.) Override the model set with
+`DA3_MODELS_TAG` / `DA3_MODELS_BASE_URL`. You can also skip the fetch entirely and point the
+plugin's *Model file* parameter (or `DA3_MODEL_PATH`) at a model you already have.
 
 ## Building an installer locally
 

@@ -47,16 +47,15 @@ changes, so a plugin release never re-exports (and never ships) untested weights
 enhancement is an in-plugin first-run downloader to a per-user cache
 (`~/.cache/da3-ofx` / `%LOCALAPPDATA%\da3-ofx`) for a zero-step experience.
 
-> **Private-repo caveat (decision needed for public distribution).** While the repo is
-> **private**, GitHub release assets are not anonymously downloadable — the `*/releases/
-> download/*` URLs 404 without auth. `fetch_models.{sh,ps1}` therefore prefer the **GitHub
-> CLI** (`gh release download`, which authenticates) and fall back to a `GITHUB_TOKEN`-
-> authenticated / public `curl`. This works today for anyone with repo access (the team).
-> **For public end-user distribution, either make the repo (or a mirror release) public, or
-> host the models on a public location** — Hugging Face is the natural home (MoGe already
-> loads from HF), e.g. a public `samhodge-tokgan/da3-ofx-models` HF repo that
-> `DA3_MODELS_BASE_URL` points at. The models (`models-v1`, pinned by SHA-256) are already
-> uploaded and the fetch is verified end-to-end via `gh`.
+> **Public distribution — resolved (2026-07-13).** The repo (`samhodge-tokgan/humbaba`) is now
+> **public**, so the `models-v1` release assets are **anonymously downloadable** — the
+> `*/releases/download/*` URLs return 200 without auth. `fetch_models.{sh,ps1}` therefore work
+> for any end user with a plain `curl` (no `gh`, no `GITHUB_TOKEN`); the `gh` path and an optional
+> `GITHUB_TOKEN` remain only as conveniences (nicer progress / higher API rate limits). The models
+> (`models-v1`, pinned by SHA-256) are the single source of truth. A public **Hugging Face** mirror
+> (MoGe already loads from HF) remains an *optional* alternative — point `DA3_MODELS_BASE_URL` at it
+> — useful only if GitHub bandwidth/quota ever becomes a concern; it is no longer required for
+> anonymous access.
 
 **C. Real GPU validation via self-hosted runners.** GitHub-hosted runners have no NVIDIA
 GPU. Register the Rocky 8 and Windows 11 boxes as **self-hosted runners**
@@ -111,6 +110,11 @@ Build **one artifact per CUDA major** that matters (start with CUDA 12; add a CU
 variant only if a supported host needs it), document the host↔CUDA matrix, and test against
 an actual **Nuke Non-commercial/Indie** install before claiming support. Keep GPU memory
 polite by default.
+
+> **Status (2026-07-13):** verified in **Nuke 16.0v8 on macOS** (arm64/CoreML) — all three
+> plugins load and run, coexisting with Nuke's own libtorch stack (no shared-lib clash). The
+> CUDA host-coexistence path (Nuke on Linux/Windows sharing cuDNN/CUDA with our CUDA-EP ORT)
+> is the one still to validate against a real Nuke install. See `BACKLOG.md`.
 
 ---
 

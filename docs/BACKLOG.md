@@ -48,6 +48,25 @@ Notes / scope:
   on **Linux and Windows** they *attempt* CUDA first (with CPU fallback) via `OrtAccel.h`.
   DA3 uses the platform accelerator (CoreML/CUDA) on every OS.
 
+## Host compatibility — verified in Foundry Nuke ✅ (macOS, 2026-07-13)
+
+The **v0.5.1** release `.pkg` was installed and loaded in **Nuke 16.0v8** (Apple
+Silicon, arm64 / CoreML): all three plugins (Depth Anything 3, MoGe Focal, Lens
+Distortion) are discovered and run, and DA3 depth renders correctly — tested up to a
+**2016** patch-aligned processing long side on a 1920×1080 plate (supersampling above
+native). This validates the **M9 library isolation in a real host**: Nuke ships its own
+**libtorch** ML stack, and our privately-renamed (`libonnxruntime_da3.*`), symbol-isolated
+ONNX Runtime coexists with **no clash** — the whole point of exporting only the OFX entry
+points + renaming the bundled ORT. (Install detail: Nuke doesn't scan `~/Library/OFX/Plugins`
+by default; point it there with `OFX_PLUGIN_PATH`, or install to `/Library/OFX/Plugins`.)
+
+Still open on the host-compat front:
+- **Nuke on Linux / Windows (CUDA)** — the real coexistence risk is there, not on macOS:
+  Nuke ships its own CUDA/cuDNN and pins a CUDA major per release, so our CUDA-EP ORT could
+  contend with Nuke's runtime (cuDNN 9.x SONAME sharing, VRAM). See `HOST_COMPATIBILITY.md`.
+- **Co-load clash test** — a CI harness that loads our bundle alongside another ORT-using
+  OFX plugin to prove the isolation under a genuine duplicate-library scenario.
+
 ## AnyCalib distortion accuracy
 
 The dynamic-resolution ONNX export uses a monkeypatched DINOv2 positional-embedding

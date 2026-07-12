@@ -19,7 +19,7 @@
 set -euo pipefail
 
 TAG="${DA3_MODELS_TAG:-models-v1}"
-REPO="samhodge-tokgan/openfx-onnx-depthanything3"
+REPO="samhodge-tokgan/humbaba"
 BASE="${DA3_MODELS_BASE_URL:-https://github.com/${REPO}/releases/download/${TAG}}"
 
 # Manifest: "<release-asset-name> <installed-filename> <sha256> <bytes>"
@@ -79,8 +79,9 @@ for entry in "${MODELS[@]}"; do
   fi
   echo "  [get]  $asset -> $name (${want_bytes} bytes)"
   tmp="$dest.part"
-  # The repo may be private (release assets need auth). Prefer the GitHub CLI, which
-  # handles auth; fall back to a plain/token'd curl of the public download URL.
+  # The repo is public, so a plain anonymous curl of the release download URL works.
+  # Prefer the GitHub CLI when present (nicer progress / handles any future privacy),
+  # otherwise curl the public URL (a GITHUB_TOKEN is optional, only for rate limits).
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     gh release download "$TAG" --repo "$REPO" --pattern "$asset" --output "$tmp" --clobber
   else

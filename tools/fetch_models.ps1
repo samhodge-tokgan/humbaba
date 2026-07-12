@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = "samhodge-tokgan/openfx-onnx-depthanything3"
+$repo = "samhodge-tokgan/humbaba"
 if (-not $BaseUrl) {
   $BaseUrl = if ($env:DA3_MODELS_BASE_URL) { $env:DA3_MODELS_BASE_URL }
              else { "https://github.com/$repo/releases/download/$Tag" }

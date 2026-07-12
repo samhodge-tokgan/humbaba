@@ -27,7 +27,7 @@ interactively launched `run.cmd` is killed when its parent session closes.
 # In C:\actions-runner (unzip the runner package there first):
 #   Register AND install the service in one shot. --runasservice installs under
 #   NT AUTHORITY\NETWORK SERVICE (no password needed) and auto-starts on boot.
-.\config.cmd --url https://github.com/samhodge-tokgan/openfx-onnx-depthanything3 `
+.\config.cmd --url https://github.com/samhodge-tokgan/humbaba `
   --token <REG_TOKEN> --name winbox-3090 --labels cuda,gpu --runasservice --unattended --replace
 ```
 
@@ -89,7 +89,7 @@ curl -fSL -o runner.tar.gz \
 tar xzf runner.tar.gz && rm runner.tar.gz
 
 # 3) Configure with the cuda label (config.sh generates svc.sh from a template).
-./config.sh --url https://github.com/samhodge-tokgan/openfx-onnx-depthanything3 \
+./config.sh --url https://github.com/samhodge-tokgan/humbaba \
   --token <REG_TOKEN> --name rocky8-gpu --labels cuda,gpu --unattended --replace
 
 # 4) Install + start the systemd service (run as your user).
@@ -129,8 +129,8 @@ sudo ./svc.sh status         # want: Active: active (running)
 Generated from the repo (needs `repo` scope on the `gh` auth):
 
 ```bash
-gh api -X POST repos/samhodge-tokgan/openfx-onnx-depthanything3/actions/runners/registration-token --jq .token
-gh api -X POST repos/samhodge-tokgan/openfx-onnx-depthanything3/actions/runners/remove-token       --jq .token
+gh api -X POST repos/samhodge-tokgan/humbaba/actions/runners/registration-token --jq .token
+gh api -X POST repos/samhodge-tokgan/humbaba/actions/runners/remove-token       --jq .token
 ```
 
 > **One GPU host at a time.** The Windows and Rocky VMs share the same passed-through GPU, so
