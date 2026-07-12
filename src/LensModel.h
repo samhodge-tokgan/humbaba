@@ -1,4 +1,4 @@
-// Copyright the openfx-onnx-depthanything3 authors.
+// Copyright the humbaba authors.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Deterministic lens-distortion math: OpenCV Brown-Conrady distort/undistort,

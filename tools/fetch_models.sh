@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright the openfx-onnx-depthanything3 authors.
+# Copyright the humbaba authors.
 # SPDX-License-Identifier: Apache-2.0
 #
 # fetch_models.sh — download the plugin's ONNX models into the installed
