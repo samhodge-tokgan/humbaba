@@ -63,40 +63,66 @@ interactively launched `run.cmd` is killed when its parent session closes.
 
 ---
 
-## Linux runner (Rocky Linux 8) — setup checklist
+## Linux runner (verified: `rocky8-gpu`, 2× RTX 3090, driver 610.43, CUDA 12, cuDNN 9)
 
-Register as a **systemd service** (`svc.sh`), which is durable by design. Sync the clock
-**first** (same skew class as the Windows VM would break registration).
+Register as a **systemd service** (`svc.sh`), which is durable by design (survives logout and
+reboot). The systemd unit runs as the **installing user** with a normal login-style PATH, so
+the Windows service-account gotchas (pwsh, execution policy, cmake PATH) do **not** apply — the
+Linux `gpu-smoke` branch is plain `bash`.
 
 ```bash
-# 0) Sync the clock (registration token is time-sensitive)
-sudo chronyd -q 'server pool.ntp.org iburst' 2>/dev/null || sudo timedatectl set-ntp true
-timedatectl status | grep -E 'synchronized|Local time'
+# 0) Sync the clock first (registration token is time-sensitive).
+timedatectl status | grep -E 'synchronized|Local time'   # rocky8 was already NTP-synced
 
-# 1) Prereqs: NVIDIA driver + CUDA 12.x runtime + cuDNN 9 on the loader path;
-#    cmake >= 3.24, gcc-c++, patchelf, git. (ORT's CUDA EP needs libcuda + cudnn9.)
+# 1) Prereqs: NVIDIA driver + CUDA 12.x runtime + cuDNN 9 on the ldconfig path;
+#    cmake >= 3.20, gcc-c++, patchelf, git. patchelf is in EPEL on Rocky 8.
+sudo dnf install -y epel-release
 sudo dnf install -y cmake gcc-c++ patchelf git
-nvidia-smi   # must show the GPU
+nvidia-smi                                  # must show the GPU
+ldconfig -p | grep -E 'libcudart|libcudnn'  # CUDA runtime + cuDNN 9 must resolve
 
-# 2) Unpack the runner into ~/actions-runner, then configure with the cuda label
-cd ~/actions-runner
+# 2) Unpack the runner, then INSTALL IT UNDER /opt (see SELinux note below), not /home.
+sudo mkdir -p /opt/actions-runner && sudo chown "$USER:$USER" /opt/actions-runner
+cd /opt/actions-runner
+curl -fSL -o runner.tar.gz \
+  https://github.com/actions/runner/releases/download/v2.335.1/actions-runner-linux-x64-2.335.1.tar.gz
+tar xzf runner.tar.gz && rm runner.tar.gz
+
+# 3) Configure with the cuda label (config.sh generates svc.sh from a template).
 ./config.sh --url https://github.com/samhodge-tokgan/openfx-onnx-depthanything3 \
   --token <REG_TOKEN> --name rocky8-gpu --labels cuda,gpu --unattended --replace
 
-# 3) Install + start the systemd service (survives logout/reboot)
-sudo ./svc.sh install
+# 4) Install + start the systemd service (run as your user).
+sudo ./svc.sh install "$USER"
 sudo ./svc.sh start
-sudo ./svc.sh status
+sudo ./svc.sh status         # want: Active: active (running)
 
-# 4) Pre-stage the model where the job expects it (or set the DA3_MODEL_LINUX var)
-sudo mkdir -p /opt/da3-models
-sudo cp DA3METRIC-LARGE-dyn.onnx /opt/da3-models/
+# 5) Stage the model, OR point the repo var at wherever it already lives.
+#    On rocky8 it was already at ~/da3-models, so we set the var instead of copying:
+#    gh variable set DA3_MODEL_LINUX --body /home/sam/da3-models/DA3METRIC-LARGE-dyn.onnx
 ```
 
-Unlike the Windows service, the systemd unit runs as the **installing user** with a normal
-login-style environment, so the PowerShell/execution-policy/PATH gotchas above do **not**
-apply — the Linux `gpu-smoke` branch is plain `bash`. Just ensure `cmake`, `nvidia-smi`, and
-the CUDA/cuDNN libraries are visible to that user.
+### Gotchas discovered (all now handled)
+
+1. **SELinux blocks a runner under `/home` (`203/EXEC Permission denied`).** Rocky 8 runs
+   SELinux *Enforcing*; the systemd unit (`init_t`) may not `exec` files labelled `user_home_t`,
+   so a runner unpacked in `~/actions-runner` fails to start. Install it under **`/opt`** and
+   relabel so the scripts get an exec-able context:
+   ```bash
+   sudo ./svc.sh uninstall            # if you already tried from ~
+   sudo mv ~/actions-runner /opt/actions-runner
+   sudo chown -R "$USER:$USER" /opt/actions-runner
+   sudo restorecon -R /opt/actions-runner   # relabel out of user_home_t
+   cd /opt/actions-runner && sudo ./svc.sh install "$USER" && sudo ./svc.sh start
+   ```
+2. **`svc.sh` doesn't exist until you run `config.sh`** — it's generated from
+   `bin/systemd.svc.sh.template` during configuration. Configure first, then install the service.
+3. **GCC 8 (Rocky 8 default) needs `-lstdc++fs` for `std::filesystem`.** The build otherwise
+   fails to link with `undefined reference to std::filesystem::...path::_M_split_cmpts()`. This
+   is handled *in the build* (`DA3_FS_LIB` in `CMakeLists.txt`, guarded by GCC version), not on
+   the runner — no action needed, noted here so the link error isn't mistaken for a runner fault.
+4. **`patchelf` is a configure-time hard requirement** even to build only `ort_check` (the
+   isolation block's `FATAL_ERROR` runs during configuration). Install it (step 1).
 
 ### Registration/removal tokens
 
