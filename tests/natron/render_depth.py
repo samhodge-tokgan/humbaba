@@ -59,7 +59,7 @@ if model:
     setp(da3, "modelFile", model)
 setp(da3, "inputIsACEScg", os.environ.get("DA3_ACESCG", "0") == "1")
 setp(da3, "computeUnits", int(os.environ.get("DA3_COMPUTE", "0")))
-setp(da3, "procResolution", int(os.environ.get("DA3_PROCRES", "504")))
+setp(da3, "procLongSide", int(os.environ.get("DA3_PROCRES", "504")))
 
 da3.connectInput(0, reader)
 writer.connectInput(0, da3)

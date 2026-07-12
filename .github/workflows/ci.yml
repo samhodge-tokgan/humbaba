@@ -47,15 +47,23 @@ jobs:
           BIN=build/DepthAnything3.ofx.bundle/Contents/MacOS/DepthAnything3.ofx
           test -f build/DepthAnything3.ofx.bundle/Contents/Info.plist
           test -f "$BIN"
-          test -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime.1.dylib
+          # ONNX Runtime is privately renamed (isolation) — see docs/HOST_COMPATIBILITY.md.
+          test -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime_da3.1.dylib
+          # The .ofx must reference the private install name, not the stock one.
+          REFS="$(otool -L "$BIN")"
+          case "$REFS" in *libonnxruntime_da3.1.dylib*) ;; *) echo "ofx not repointed to private ORT"; exit 1;; esac
+          case "$REFS" in *@rpath/libonnxruntime.1.dylib*) echo "ofx still references stock ORT"; exit 1;; esac
           # Shell pattern matching, not `... | grep -q` (SIGPIPE under pipefail).
           ARCHES="$(lipo -info "$BIN")"
           echo "== arch == $ARCHES"
           case "$ARCHES" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
+          # Isolation (D0): ONLY the two OFX entry points may be exported.
           SYMS="$(nm -gU "$BIN")"
-          echo "== OFX symbols =="
+          echo "== exported symbols ==" ; echo "$SYMS"
           case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
           case "$SYMS" in *OfxGetNumberOfPlugins*) ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+          NSYMS="$(nm -gU "$BIN" | grep -c ' T ')"
+          test "$NSYMS" -le 2 || { echo "too many exported symbols ($NSYMS); isolation leak"; exit 1; }
 
       - name: Verify CoreML EP available at runtime
         run: |
@@ -67,3 +75,184 @@ jobs:
           name: DepthAnything3-ofx-bundle
           path: build/DepthAnything3.ofx.bundle
           if-no-files-found: error
+
+  build-linux:
+    name: Build .ofx bundle (ONNX/CUDA, Linux x86_64)
+    runs-on: ubuntu-latest   # CPU-only runner: validates the cross-platform build,
+                             # bundle layout, and that the CUDA-enabled ORT links.
+                             # Actual GPU inference is verified on a self-hosted
+                             # CUDA box (see docs/LINUX.md).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install patchelf (privately renames the bundled ONNX Runtime)
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
+      - name: Configure & build (ONNX Runtime CUDA package, Linux)
+        run: |
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ort_check DepthAnything3 -j3
+
+      - name: Verify Linux bundle layout, ELF, OFX symbols and bundled runtime
+        run: |
+          set -euo pipefail
+          ARCH=build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64
+          BIN="$ARCH/DepthAnything3.ofx"
+          test -f "$BIN"
+          # ONNX Runtime is privately renamed (isolation) — see docs/HOST_COMPATIBILITY.md.
+          test -f "$ARCH/libonnxruntime_da3.so.1"
+          # The .ofx must NEED the private name, not the stock one.
+          NEEDED="$(readelf -d "$BIN" | grep NEEDED || true)"
+          case "$NEEDED" in *libonnxruntime_da3.so.1*) ;; *) echo "ofx not repointed to private ORT"; exit 1;; esac
+          case "$NEEDED" in *"libonnxruntime.so.1]"*) echo "ofx still references stock libonnxruntime.so.1"; exit 1;; esac
+          # CUDA provider libs must be bundled alongside the .ofx.
+          test -f "$ARCH/libonnxruntime_providers_cuda.so"
+          test -f "$ARCH/libonnxruntime_providers_shared.so"
+          # ELF shared object with $ORIGIN runpath so it finds the bundled ORT.
+          FILE="$(file -b "$BIN")"
+          echo "== file == $FILE"
+          case "$FILE" in *"ELF 64-bit"*"shared object"*) ;; *) echo "not an ELF shared object"; exit 1;; esac
+          RUNPATH="$(readelf -d "$BIN" | grep -E 'RUNPATH|RPATH' || true)"
+          echo "== runpath == $RUNPATH"
+          case "$RUNPATH" in *'$ORIGIN'*) ;; *) echo "missing \$ORIGIN runpath"; exit 1;; esac
+          SYMS="$(nm -D "$BIN" || true)"
+          case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
+          case "$SYMS" in *OfxGetNumberOfPlugins*) ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+
+      - name: Verify CUDA EP compiled into the ORT package
+        run: |
+          set -euo pipefail
+          OUT="$(LD_LIBRARY_PATH="$PWD/build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64" ./build/ort_check || true)"
+          echo "$OUT"
+          case "$OUT" in *"CUDAExecutionProvider"*) echo "CUDA EP present" ;; *) echo "CUDA EP missing from ORT package"; exit 1;; esac
+
+      - name: Upload Linux bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DepthAnything3-ofx-bundle-linux
+          path: build/DepthAnything3.ofx.bundle
+          if-no-files-found: error
+
+  build-windows:
+    name: Build .ofx bundle (ONNX/CUDA, Windows x64)
+    runs-on: windows-2022     # pin: has VS 2022 for the "Visual Studio 17 2022" generator.
+                              # CPU-only runner: validates the MSVC build, Win64
+                              # bundle layout, and that the CUDA-enabled ORT links.
+                              # Actual GPU inference is verified on a self-hosted
+                              # CUDA box (see docs/WINDOWS.md).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (ONNX Runtime CUDA package, MSVC)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DDA3_WITH_ONNX=ON
+          cmake --build build --config Release --target ort_check DepthAnything3 --parallel
+
+      - name: Verify Win64 bundle layout, DLLs and OFX exports
+        shell: pwsh
+        run: |
+          $arch = "build/DepthAnything3.ofx.bundle/Contents/Win64"
+          foreach ($f in @("DepthAnything3.ofx","onnxruntime.dll",
+                           "onnxruntime_providers_cuda.dll","onnxruntime_providers_shared.dll")) {
+            if (!(Test-Path "$arch/$f")) { throw "missing $f" }
+          }
+          # Locate dumpbin via vswhere (reliable across runner images).
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { throw "could not locate dumpbin.exe via vswhere" }
+          Write-Host "dumpbin: $dumpbin"
+          # Out-String: collapse the line array to one string so -match is a boolean
+          # (on an array, -match returns the matching elements, not true/false).
+          $exports = (& $dumpbin /exports "$arch\DepthAnything3.ofx" | Out-String)
+          if ($exports -notmatch "OfxGetNumberOfPlugins") { throw "missing OfxGetNumberOfPlugins export" }
+          if ($exports -notmatch "OfxGetPlugin") { throw "missing OfxGetPlugin export" }
+          Write-Host "Win64 bundle + OFX exports OK"
+
+      - name: Verify CUDA EP compiled into the ORT package
+        shell: pwsh
+        run: |
+          $out = (& build/Release/ort_check.exe | Out-String)
+          Write-Host $out
+          if ($out -notmatch "CUDAExecutionProvider") { throw "CUDA EP missing from ORT package" }
+
+      - name: Upload Windows bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DepthAnything3-ofx-bundle-windows
+          path: build/DepthAnything3.ofx.bundle
+          if-no-files-found: error
+
+  gpu-smoke:
+    name: GPU inference smoke (self-hosted CUDA)
+    # Runs on a self-hosted box with an NVIDIA GPU (CUDA 12.x, cuDNN 9 on the loader
+    # path). GitHub-hosted runners have no GPU, so this is the only job that exercises
+    # ACTUAL CUDA inference + cross-platform depth parity. The `cuda` label may be on a
+    # Windows box (RTX 3090s, VS 2022) or a Rocky Linux 8 box — the steps below branch
+    # on runner.os so either can service it. See docs/CI_RUNNERS.md for runner setup.
+    runs-on: [self-hosted, cuda]
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Build ort_check (one step per OS) ----
+      - name: Build ort_check (Windows, VS 2022)
+        # Windows PowerShell 5.1 (powershell.exe, always in System32) — the runner
+        # service account (NETWORK SERVICE) has no pwsh (PowerShell 7) on its PATH.
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DDA3_WITH_ONNX=ON
+          cmake --build build --config Release --target ort_check --parallel
+
+      - name: Build ort_check (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ort_check -j"$(nproc)"
+
+      # ---- Run + assert (one step per OS; identical checks) ----
+      - name: Run DA3 on GPU + assert CUDA + depth parity (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          # Model is pre-staged on the runner (see docs/CI_RUNNERS.md); it is not
+          # re-downloaded each run. Override with the DA3_MODEL repo/runner var.
+          DA3_MODEL: ${{ vars.DA3_MODEL_WIN || 'C:\dev\da3-models\DA3METRIC-LARGE-dyn.onnx' }}
+        run: |
+          if (-not (Test-Path $env:DA3_MODEL)) { throw "model not staged at $env:DA3_MODEL" }
+          $out = (& build/Release/ort_check.exe $env:DA3_MODEL | Out-String)
+          Write-Host $out
+          if ($out -notmatch "CUDA EP available: YES") { throw "CUDA EP not available on the runner" }
+          if ($out -notmatch "session created \(CUDA\)") { throw "session did not run on CUDA (CPU fallback?)" }
+          $m = [regex]::Match($out, "mean=([0-9.]+)")
+          if (-not $m.Success) { throw "could not parse depth mean from ort_check output" }
+          $mean = [double]$m.Groups[1].Value
+          Write-Host "depth mean = $mean (expected ~0.7026, cross-platform parity)"
+          if ([math]::Abs($mean - 0.7026) -gt 0.01) {
+            throw "depth mean $mean out of parity tolerance (expected ~0.7026)"
+          }
+          Write-Host "GPU smoke OK: CUDA session created and depth parity holds."
+
+      - name: Run DA3 on GPU + assert CUDA + depth parity (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          # Model is pre-staged on the runner (see docs/CI_RUNNERS.md). Override with
+          # the DA3_MODEL_LINUX repo/runner var.
+          DA3_MODEL: ${{ vars.DA3_MODEL_LINUX || '/opt/da3-models/DA3METRIC-LARGE-dyn.onnx' }}
+        run: |
+          set -euo pipefail
+          test -f "$DA3_MODEL" || { echo "model not staged at $DA3_MODEL"; exit 1; }
+          # ort_check has BUILD_RPATH=${ORT_DIR}/lib, so it resolves libonnxruntime.so.1
+          # and its sibling CUDA provider libs directly; CUDA/cuDNN are on the ldconfig
+          # path. No bundle assembly (hence no patchelf) needed for this smoke test.
+          OUT="$(./build/ort_check "$DA3_MODEL")"
+          echo "$OUT"
+          case "$OUT" in *"CUDA EP available: YES"*) ;; *) echo "CUDA EP not available on the runner"; exit 1;; esac
+          case "$OUT" in *"session created (CUDA)"*) ;; *) echo "session did not run on CUDA (CPU fallback?)"; exit 1;; esac
+          MEAN="$(printf '%s' "$OUT" | sed -nE 's/.*mean=([0-9.]+).*/\1/p' | head -1)"
+          test -n "$MEAN" || { echo "could not parse depth mean from ort_check output"; exit 1; }
+          echo "depth mean = $MEAN (expected ~0.7026, cross-platform parity)"
+          awk -v m="$MEAN" 'BEGIN{ d=m-0.7026; if (d<0) d=-d; if (d>0.01){ print "depth mean "m" out of parity tolerance"; exit 1 } }'
+          echo "GPU smoke OK: CUDA session created and depth parity holds."
