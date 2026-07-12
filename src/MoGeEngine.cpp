@@ -11,6 +11,8 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include "OrtAccel.h"
+
 namespace da3 {
 
 namespace {
@@ -111,15 +113,15 @@ MoGeEngine::MoGeEngine(const std::string& model_path, ComputeUnits units,
 
   // Try CoreML, then fall back to CPU. MoGe's graph (num_tokens-driven dynamic
   // reshapes) can fail CoreML's MLModel build entirely, so the fallback is required.
-  auto tryCreate = [&](bool use_coreml) -> bool {
+  auto tryCreate = [&](bool use_accel) -> bool {
     Ort::SessionOptions so;
     so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     if (intra_threads > 0) so.SetIntraOpNumThreads(intra_threads);
-    if (use_coreml && DepthEngine::CoreMLAvailable()) {
+    if (use_accel && da3::AcceleratorAvailable()) {
       try {
-        std::unordered_map<std::string, std::string> opts = {
-            {"MLComputeUnits", ComputeUnitsStr(units)}};
-        so.AppendExecutionProvider("CoreML", opts);
+        // No static-shape/MLProgram constraint: MoGe's graph is dynamic (num_tokens).
+        da3::AppendAccelerator(so, ComputeUnitsStr(units),
+                               /*coreml_static=*/false, /*coreml_mlprogram=*/false);
       } catch (const Ort::Exception&) {
         return false;
       }
@@ -133,6 +135,7 @@ MoGeEngine::MoGeEngine(const std::string& model_path, ComputeUnits units,
       return false;
     }
   };
+#ifdef __APPLE__
   // MoGe's dynamic (num_tokens-driven) graph is not CoreML-executable (the MLProgram
   // build fails and NeuralNetwork partitions error at runtime), so run it on CPU.
   // It's an on-demand analysis, not a per-frame effect, so CPU latency is acceptable.
@@ -140,6 +143,12 @@ MoGeEngine::MoGeEngine(const std::string& model_path, ComputeUnits units,
   if (!tryCreate(false)) {
     return;
   }
+#else
+  // On Linux/Windows the CUDA EP handles the dynamic graph; fall back to CPU if not.
+  if (!tryCreate(true) && !tryCreate(false)) {
+    return;
+  }
+#endif
   last_error_.clear();
   // Identify the image vs num_tokens inputs by name.
   size_t nin = impl_->session->GetInputCount();

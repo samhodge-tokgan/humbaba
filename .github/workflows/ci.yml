@@ -67,3 +67,52 @@ jobs:
           name: DepthAnything3-ofx-bundle
           path: build/DepthAnything3.ofx.bundle
           if-no-files-found: error
+
+  build-linux:
+    name: Build .ofx bundle (ONNX/CUDA, Linux x86_64)
+    runs-on: ubuntu-latest   # CPU-only runner: validates the cross-platform build,
+                             # bundle layout, and that the CUDA-enabled ORT links.
+                             # Actual GPU inference is verified on a self-hosted
+                             # CUDA box (see docs/LINUX.md).
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build (ONNX Runtime CUDA package, Linux)
+        run: |
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target ort_check DepthAnything3 -j3
+
+      - name: Verify Linux bundle layout, ELF, OFX symbols and bundled runtime
+        run: |
+          set -euo pipefail
+          ARCH=build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64
+          BIN="$ARCH/DepthAnything3.ofx"
+          test -f "$BIN"
+          test -f "$ARCH/libonnxruntime.so.1"
+          # CUDA provider libs must be bundled alongside the .ofx.
+          test -f "$ARCH/libonnxruntime_providers_cuda.so"
+          test -f "$ARCH/libonnxruntime_providers_shared.so"
+          # ELF shared object with $ORIGIN runpath so it finds the bundled ORT.
+          FILE="$(file -b "$BIN")"
+          echo "== file == $FILE"
+          case "$FILE" in *"ELF 64-bit"*"shared object"*) ;; *) echo "not an ELF shared object"; exit 1;; esac
+          RUNPATH="$(readelf -d "$BIN" | grep -E 'RUNPATH|RPATH' || true)"
+          echo "== runpath == $RUNPATH"
+          case "$RUNPATH" in *'$ORIGIN'*) ;; *) echo "missing \$ORIGIN runpath"; exit 1;; esac
+          SYMS="$(nm -D "$BIN" || true)"
+          case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
+          case "$SYMS" in *OfxGetNumberOfPlugins*) ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+
+      - name: Verify CUDA EP compiled into the ORT package
+        run: |
+          set -euo pipefail
+          OUT="$(LD_LIBRARY_PATH="$PWD/build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64" ./build/ort_check || true)"
+          echo "$OUT"
+          case "$OUT" in *"CUDAExecutionProvider"*) echo "CUDA EP present" ;; *) echo "CUDA EP missing from ORT package"; exit 1;; esac
+
+      - name: Upload Linux bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DepthAnything3-ofx-bundle-linux
+          path: build/DepthAnything3.ofx.bundle
+          if-no-files-found: error

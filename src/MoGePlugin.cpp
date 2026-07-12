@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 #include <dlfcn.h>
 #include <sys/stat.h>
 #endif
@@ -57,11 +57,15 @@ static inline void acescgToSrgb(float r, float g, float b, float* o) {
 }
 
 static std::string mogeBundleModelPath() {
+#if defined(__APPLE__) || defined(__linux__)
 #if defined(__APPLE__)
+  const std::string marker = "/Contents/MacOS/";
+#else
+  const std::string marker = "/Contents/Linux-x86-64/";
+#endif
   Dl_info info;
   if (dladdr(reinterpret_cast<const void*>(&mogeBundleModelPath), &info) && info.dli_fname) {
     std::string p(info.dli_fname);
-    const std::string marker = "/Contents/MacOS/";
     auto pos = p.rfind(marker);
     if (pos != std::string::npos) {
       std::string cand = p.substr(0, pos) + "/Contents/Resources/moge-2-vitb.onnx";

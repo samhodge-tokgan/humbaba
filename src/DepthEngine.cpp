@@ -10,6 +10,8 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include "OrtAccel.h"
+
 namespace da3 {
 
 int RoundToMultiple(int v, int m) {
@@ -83,17 +85,15 @@ DepthEngine::DepthEngine(const std::string& model_path, ComputeUnits units,
   if (intra_threads > 0) so.SetIntraOpNumThreads(intra_threads);
 
   bool used_coreml = false;
-  if (CoreMLAvailable()) {
+  if (da3::AcceleratorAvailable()) {
     try {
-      std::unordered_map<std::string, std::string> coreml_opts = {
-          {"MLComputeUnits", ComputeUnitsString(units)},
-          {"ModelFormat", "MLProgram"},
-          {"RequireStaticInputShapes", "1"},
-      };
-      so.AppendExecutionProvider("CoreML", coreml_opts);
+      // CoreML on macOS (MLProgram, static shapes for no per-frame recompiles);
+      // CUDA on Linux/Windows. See src/OrtAccel.h.
+      da3::AppendAccelerator(so, ComputeUnitsString(units),
+                             /*coreml_static=*/true, /*coreml_mlprogram=*/true);
       used_coreml = true;
     } catch (const Ort::Exception& e) {
-      last_error_ = std::string("CoreML EP append failed: ") + e.what();
+      last_error_ = std::string(da3::AcceleratorSubstr()) + " EP append failed: " + e.what();
       used_coreml = false;
     }
   }
@@ -101,9 +101,29 @@ DepthEngine::DepthEngine(const std::string& model_path, ComputeUnits units,
   try {
     impl_->session = std::make_unique<Ort::Session>(impl_->env, model_path.c_str(), so);
   } catch (const Ort::Exception& e) {
-    last_error_ = std::string("session create failed: ") + e.what();
-    impl_->session.reset();
-    return;
+    // The accelerator EP can fail at session-creation time (not at append) if its
+    // runtime libraries are missing/incompatible — e.g. on Linux when the CUDA
+    // toolkit / cuDNN is not installed. Retry once on a plain CPU session so the
+    // plugin still works (slower) instead of failing outright.
+    if (used_coreml) {
+      last_error_ = std::string(da3::AcceleratorSubstr()) +
+                    " session create failed (falling back to CPU): " + e.what();
+      Ort::SessionOptions cpu_so;
+      cpu_so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+      if (intra_threads > 0) cpu_so.SetIntraOpNumThreads(intra_threads);
+      used_coreml = false;
+      try {
+        impl_->session = std::make_unique<Ort::Session>(impl_->env, model_path.c_str(), cpu_so);
+      } catch (const Ort::Exception& e2) {
+        last_error_ = std::string("session create failed: ") + e2.what();
+        impl_->session.reset();
+        return;
+      }
+    } else {
+      last_error_ = std::string("session create failed: ") + e.what();
+      impl_->session.reset();
+      return;
+    }
   }
   impl_->coreml_active = used_coreml;
 
@@ -120,12 +140,7 @@ DepthEngine::~DepthEngine() = default;
 
 bool DepthEngine::coreml_active() const { return impl_ && impl_->coreml_active; }
 
-bool DepthEngine::CoreMLAvailable() {
-  for (const auto& p : Ort::GetAvailableProviders()) {
-    if (p.find("CoreML") != std::string::npos) return true;
-  }
-  return false;
-}
+bool DepthEngine::CoreMLAvailable() { return da3::AcceleratorAvailable(); }
 
 DepthResult DepthEngine::Run(const float* rgb, int in_w, int in_h) {
   DepthResult out;

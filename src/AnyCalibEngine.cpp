@@ -11,6 +11,8 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include "OrtAccel.h"
+
 namespace da3 {
 
 namespace {
@@ -119,14 +121,14 @@ struct AnyCalibEngine::Impl {
 
 AnyCalibEngine::AnyCalibEngine(const std::string& model_path, ComputeUnits units, int intra_threads)
     : impl_(std::make_unique<Impl>()) {
-  auto tryCreate = [&](bool coreml) -> bool {
+  auto tryCreate = [&](bool accel) -> bool {
     Ort::SessionOptions so;
     so.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     if (intra_threads > 0) so.SetIntraOpNumThreads(intra_threads);
-    if (coreml && DepthEngine::CoreMLAvailable()) {
+    if (accel && da3::AcceleratorAvailable()) {
       try {
-        std::unordered_map<std::string, std::string> o = {{"MLComputeUnits", CU(units)}};
-        so.AppendExecutionProvider("CoreML", o);
+        da3::AppendAccelerator(so, CU(units),
+                               /*coreml_static=*/false, /*coreml_mlprogram=*/false);
       } catch (const Ort::Exception&) { return false; }
     }
     try {

@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 #include <dlfcn.h>
 #include <sys/stat.h>
 #endif
@@ -40,11 +40,16 @@ static inline void ld_acescgToSrgb(float r, float g, float b, float* o) {
   o[0] = ld_srgb(lr); o[1] = ld_srgb(lg); o[2] = ld_srgb(lb);
 }
 static std::string ld_bundleModel() {
+#if defined(__APPLE__) || defined(__linux__)
 #if defined(__APPLE__)
+  const std::string marker = "/Contents/MacOS/";
+#else
+  const std::string marker = "/Contents/Linux-x86-64/";
+#endif
   Dl_info info;
   if (dladdr(reinterpret_cast<const void*>(&ld_bundleModel), &info) && info.dli_fname) {
     std::string p(info.dli_fname);
-    auto pos = p.rfind("/Contents/MacOS/");
+    auto pos = p.rfind(marker);
     if (pos != std::string::npos) {
       std::string cand = p.substr(0, pos) + "/Contents/Resources/anycalib_dist.onnx";
       struct stat st;
