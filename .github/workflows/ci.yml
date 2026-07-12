@@ -157,9 +157,12 @@ jobs:
                            "onnxruntime_providers_cuda.dll","onnxruntime_providers_shared.dll")) {
             if (!(Test-Path "$arch/$f")) { throw "missing $f" }
           }
-          $dumpbin = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio","${env:ProgramFiles(x86)}\Microsoft Visual Studio" `
-            -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          $exports = & $dumpbin.FullName /exports "$arch/DepthAnything3.ofx"
+          # Locate dumpbin via vswhere (reliable across runner images).
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { throw "could not locate dumpbin.exe via vswhere" }
+          Write-Host "dumpbin: $dumpbin"
+          $exports = & $dumpbin /exports "$arch\DepthAnything3.ofx"
           if ($exports -notmatch "OfxGetNumberOfPlugins") { throw "missing OfxGetNumberOfPlugins export" }
           if ($exports -notmatch "OfxGetPlugin") { throw "missing OfxGetPlugin export" }
           Write-Host "Win64 bundle + OFX exports OK"
