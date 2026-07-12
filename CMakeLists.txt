@@ -11,6 +11,13 @@ set(DA3_ORT_VERSION "1.27.1" CACHE STRING "ONNX Runtime version to fetch")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# GCC < 9 (e.g. Rocky Linux 8's default 8.5) keeps std::filesystem in a separate
+# library that must be linked explicitly. Empty (a no-op link) on newer toolchains.
+set(DA3_FS_LIB "")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+  set(DA3_FS_LIB stdc++fs)
+endif()
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
@@ -143,7 +150,7 @@ endif()
 # The plugin: a loadable module named DepthAnything3.ofx
 # ---------------------------------------------------------------------------
 add_library(DepthAnything3 MODULE src/DepthAnything3Plugin.cpp)
-target_link_libraries(DepthAnything3 PRIVATE ofxsupport)
+target_link_libraries(DepthAnything3 PRIVATE ofxsupport ${DA3_FS_LIB})
 set_target_properties(DepthAnything3 PROPERTIES
   PREFIX ""
   OUTPUT_NAME "DepthAnything3"
@@ -325,7 +332,7 @@ endif()
 # ---------------------------------------------------------------------------
 if(DA3_WITH_ONNX)
   add_executable(ort_check tests/ort_check.cpp)
-  target_link_libraries(ort_check PRIVATE onnxruntime)
+  target_link_libraries(ort_check PRIVATE onnxruntime ${DA3_FS_LIB})
   if(WIN32)
     # No rpath on Windows: copy the ORT DLLs next to ort_check.exe so it can run.
     file(GLOB ORT_ALL_DLLS "${ORT_DIR}/lib/*.dll")
