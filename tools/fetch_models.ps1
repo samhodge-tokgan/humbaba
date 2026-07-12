@@ -71,8 +71,18 @@ foreach ($m in $models) {
   }
   Write-Host "  [get]  $($m.asset) -> $($m.name) ($($m.bytes) bytes)"
   $tmp = "$dest.part"
-  & curl.exe -fL --retry 3 --progress-bar -o $tmp "$BaseUrl/$($m.asset)"
-  if ($LASTEXITCODE -ne 0) { throw "download failed for $($m.asset)" }
+  # The repo may be private (release assets need auth). Prefer the GitHub CLI, which
+  # handles auth; fall back to a plain/token'd curl of the public download URL.
+  $gh = Get-Command gh -ErrorAction SilentlyContinue
+  if ($gh -and (gh auth status 2>$null; $LASTEXITCODE -eq 0)) {
+    & gh release download $Tag --repo $repo --pattern $m.asset --output $tmp --clobber
+    if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $($m.asset)" }
+  } else {
+    $hdr = @()
+    if ($env:GITHUB_TOKEN) { $hdr = @("-H", "Authorization: token $($env:GITHUB_TOKEN)") }
+    & curl.exe -fL --retry 3 --progress-bar @hdr -o $tmp "$BaseUrl/$($m.asset)"
+    if ($LASTEXITCODE -ne 0) { throw "download failed for $($m.asset)" }
+  }
   $got = (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower()
   if ($got -ne $m.sha) {
     Remove-Item $tmp -Force

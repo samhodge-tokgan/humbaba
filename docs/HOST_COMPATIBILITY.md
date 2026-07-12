@@ -47,6 +47,17 @@ changes, so a plugin release never re-exports (and never ships) untested weights
 enhancement is an in-plugin first-run downloader to a per-user cache
 (`~/.cache/da3-ofx` / `%LOCALAPPDATA%\da3-ofx`) for a zero-step experience.
 
+> **Private-repo caveat (decision needed for public distribution).** While the repo is
+> **private**, GitHub release assets are not anonymously downloadable — the `*/releases/
+> download/*` URLs 404 without auth. `fetch_models.{sh,ps1}` therefore prefer the **GitHub
+> CLI** (`gh release download`, which authenticates) and fall back to a `GITHUB_TOKEN`-
+> authenticated / public `curl`. This works today for anyone with repo access (the team).
+> **For public end-user distribution, either make the repo (or a mirror release) public, or
+> host the models on a public location** — Hugging Face is the natural home (MoGe already
+> loads from HF), e.g. a public `samhodge-tokgan/da3-ofx-models` HF repo that
+> `DA3_MODELS_BASE_URL` points at. The models (`models-v1`, pinned by SHA-256) are already
+> uploaded and the fetch is verified end-to-end via `gh`.
+
 **C. Real GPU validation via self-hosted runners.** GitHub-hosted runners have no NVIDIA
 GPU. Register the Rocky 8 and Windows 11 boxes as **self-hosted runners**
 (labels `self-hosted,linux,cuda` / `self-hosted,windows,cuda`) and add a `gpu-smoke` job
@@ -156,6 +167,23 @@ the cost of a from-source static ORT. Keep **(C)** as the escalation if a host o
 found to still collide. Add a CI **"co-load" test**: a tiny OFX host harness that loads our
 plugin *alongside* a second module linking a different `libonnxruntime`, asserting both load
 and run — the only way to prove isolation works.
+
+### Implementation status
+- **(D0) done, all platforms.** The `.ofx` exports only `OfxGetNumberOfPlugins`/`OfxGetPlugin`
+  (macOS: `-exported_symbols_list`; Linux: `--version-script`; Windows: already the case).
+  Verified on macOS: **790 → 2** exported symbols, plugin still renders in Natron.
+- **(B) done on macOS + Linux.** The bundled ORT is renamed to `libonnxruntime_da3.*`
+  (macOS `install_name_tool -id`/`-change` + re-sign; Linux `patchelf --set-soname` +
+  `--replace-needed` on the `.ofx` and the provider `.so`s). Verified on macOS end-to-end
+  (Natron render passes with the renamed runtime); Linux is exercised by the `build-linux`
+  CI check (needs `patchelf`).
+- **(B) deferred on Windows.** Renaming the DLL there also requires **PE-import patching of
+  the provider DLLs** (they import from `onnxruntime.dll` by name), which is more involved.
+  The delay-load hook already loads *our* `onnxruntime.dll` by full path, which is sufficient
+  when no other ORT is present in the host (e.g. Nuke, which uses libtorch). Full Windows
+  isolation (rename + provider import-table patch, or `AddDllDirectory` in a private
+  namespace) is tracked as follow-up.
+- **Not yet done:** the "co-load" clash test harness.
 
 ### Don't bundle the CUDA runtime
 `cudart`/`cublas`/`cudnn` have fixed NVIDIA SONAMEs we can't rename, and CUDA context is

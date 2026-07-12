@@ -77,6 +77,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install patchelf (privately renames the bundled ONNX Runtime)
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
       - name: Configure & build (ONNX Runtime CUDA package, Linux)
         run: |
           cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
@@ -88,7 +91,12 @@ jobs:
           ARCH=build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64
           BIN="$ARCH/DepthAnything3.ofx"
           test -f "$BIN"
-          test -f "$ARCH/libonnxruntime.so.1"
+          # ONNX Runtime is privately renamed (isolation) — see docs/HOST_COMPATIBILITY.md.
+          test -f "$ARCH/libonnxruntime_da3.so.1"
+          # The .ofx must NEED the private name, not the stock one.
+          NEEDED="$(readelf -d "$BIN" | grep NEEDED || true)"
+          case "$NEEDED" in *libonnxruntime_da3.so.1*) ;; *) echo "ofx not repointed to private ORT"; exit 1;; esac
+          case "$NEEDED" in *"libonnxruntime.so.1]"*) echo "ofx still references stock libonnxruntime.so.1"; exit 1;; esac
           # CUDA provider libs must be bundled alongside the .ofx.
           test -f "$ARCH/libonnxruntime_providers_cuda.so"
           test -f "$ARCH/libonnxruntime_providers_shared.so"

@@ -111,23 +111,32 @@ set_target_properties(ofxsupport PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ---------------------------------------------------------------------------
 # Per-platform .ofx.bundle layout (OFX packaging spec).
 # ---------------------------------------------------------------------------
+# Isolation (B): the bundled ONNX Runtime is given a PRIVATE name so the dynamic
+# loader can never deduplicate it against a host's or sibling plugin's copy of the
+# same library (which would bind us to a different, ABI-incompatible ORT and crash).
+# OFX_LIB_ORIG is the name the .ofx links against; OFX_LIB_BUNDLED is the private
+# name we rename it to (and repoint the .ofx + providers at) post-build.
 if(APPLE)
   set(OFX_ARCH_DIR "MacOS")        # Contents/MacOS/*.ofx
   set(OFX_LIB_DIR "Frameworks")    # bundled shared libs
   set(OFX_RPATH "@loader_path/../Frameworks")
-  set(OFX_LIB_BUNDLED "libonnxruntime.1.dylib")
+  set(OFX_LIB_ORIG "libonnxruntime.1.dylib")
+  set(OFX_LIB_BUNDLED "libonnxruntime_da3.1.dylib")
 elseif(WIN32)
   set(OFX_ARCH_DIR "Win64")        # Contents/Win64/*.ofx (OFX-spec arch dir)
   set(OFX_LIB_DIR "Win64")         # DLLs alongside the .ofx
   set(OFX_RPATH "")                # Windows has no rpath; DLLs found via loader dir
-  set(OFX_LIB_BUNDLED "onnxruntime.dll")
+  set(OFX_LIB_ORIG "onnxruntime.dll")
+  set(OFX_LIB_BUNDLED "onnxruntime.dll")  # Windows rename needs PE import patching of
+                                          # the providers too; deferred (see WinLoader).
 else()                             # Linux
   # OFX packaging spec: the 64-bit Linux arch dir is "Linux-x86-64" (hyphens).
   # Using an underscore makes OFX hosts (Natron) silently skip the binary.
   set(OFX_ARCH_DIR "Linux-x86-64") # Contents/Linux-x86-64/*.ofx
   set(OFX_LIB_DIR "Linux-x86-64")  # .so alongside the .ofx
   set(OFX_RPATH "$ORIGIN")
-  set(OFX_LIB_BUNDLED "libonnxruntime.so.1")
+  set(OFX_LIB_ORIG "libonnxruntime.so.1")
+  set(OFX_LIB_BUNDLED "libonnxruntime_da3.so.1")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -143,6 +152,20 @@ set_target_properties(DepthAnything3 PROPERTIES
 if(APPLE)
   # OFX plugins are Mach-O bundles.
   target_link_options(DepthAnything3 PRIVATE -bundle)
+endif()
+
+# Isolation (D0): export ONLY the OFX C entry points, so none of our C++ / static-lib
+# symbols leak into the host process and interpose on the host or a sibling OFX plugin.
+# (Windows already exports only the __declspec(dllexport) OFX entry points.)
+if(NOT WIN32)
+  target_compile_options(DepthAnything3 PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+endif()
+if(APPLE)
+  target_link_options(DepthAnything3 PRIVATE
+    "-Wl,-exported_symbols_list,${CMAKE_SOURCE_DIR}/packaging/ofx_exports.macos.sym")
+elseif(UNIX)
+  target_link_options(DepthAnything3 PRIVATE
+    "-Wl,--version-script=${CMAKE_SOURCE_DIR}/packaging/ofx_exports.map")
 endif()
 
 if(DA3_WITH_ONNX)
@@ -224,6 +247,41 @@ if(DA3_WITH_ONNX)
         COMMAND ${CMAKE_COMMAND} -E copy "${pl}" "${BUNDLE_DIR}/Contents/${OFX_LIB_DIR}/"
         VERBATIM)
     endforeach()
+  endif()
+
+  # Isolation (B): rename the bundled ONNX Runtime to a private name and repoint the
+  # .ofx (and, on Linux, the provider libs that NEED it) at that name, so the loader
+  # can never deduplicate it against a host's / sibling plugin's copy.
+  if(NOT "${OFX_LIB_ORIG}" STREQUAL "${OFX_LIB_BUNDLED}")
+    set(_bundled "${BUNDLE_DIR}/Contents/${OFX_LIB_DIR}/${OFX_LIB_BUNDLED}")
+    set(_ofxbin "${BUNDLE_DIR}/Contents/${OFX_ARCH_DIR}/${OFX_BUNDLE_BINARY}")
+    if(APPLE)
+      add_custom_command(TARGET DepthAnything3 POST_BUILD
+        COMMAND install_name_tool -id "@rpath/${OFX_LIB_BUNDLED}" "${_bundled}"
+        COMMAND install_name_tool -change "@rpath/${OFX_LIB_ORIG}" "@rpath/${OFX_LIB_BUNDLED}" "${_ofxbin}"
+        COMMAND codesign --force --sign - "${_bundled}"
+        COMMAND codesign --force --sign - "${_ofxbin}"
+        COMMENT "Isolating ONNX Runtime (private install name ${OFX_LIB_BUNDLED})"
+        VERBATIM)
+    elseif(UNIX)
+      find_program(PATCHELF patchelf)
+      if(NOT PATCHELF)
+        message(FATAL_ERROR "patchelf not found (needed to privately rename the bundled "
+          "ONNX Runtime). Install it: dnf install patchelf  /  apt-get install patchelf")
+      endif()
+      add_custom_command(TARGET DepthAnything3 POST_BUILD
+        COMMAND ${PATCHELF} --set-soname "${OFX_LIB_BUNDLED}" "${_bundled}"
+        COMMAND ${PATCHELF} --replace-needed "${OFX_LIB_ORIG}" "${OFX_LIB_BUNDLED}" "${_ofxbin}"
+        COMMENT "Isolating ONNX Runtime (private soname ${OFX_LIB_BUNDLED})"
+        VERBATIM)
+      foreach(pl ${ORT_PROVIDER_LIBS})
+        get_filename_component(_pln "${pl}" NAME)
+        add_custom_command(TARGET DepthAnything3 POST_BUILD
+          COMMAND ${PATCHELF} --replace-needed "${OFX_LIB_ORIG}" "${OFX_LIB_BUNDLED}"
+                  "${BUNDLE_DIR}/Contents/${OFX_LIB_DIR}/${_pln}"
+          VERBATIM)
+      endforeach()
+    endif()
   endif()
 endif()
 

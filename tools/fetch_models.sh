@@ -79,7 +79,15 @@ for entry in "${MODELS[@]}"; do
   fi
   echo "  [get]  $asset -> $name (${want_bytes} bytes)"
   tmp="$dest.part"
-  curl -fL --retry 3 --progress-bar -o "$tmp" "$BASE/$asset"
+  # The repo may be private (release assets need auth). Prefer the GitHub CLI, which
+  # handles auth; fall back to a plain/token'd curl of the public download URL.
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh release download "$TAG" --repo "$REPO" --pattern "$asset" --output "$tmp" --clobber
+  else
+    hdr=()
+    [ -n "${GITHUB_TOKEN:-}" ] && hdr=(-H "Authorization: token ${GITHUB_TOKEN}")
+    curl -fL --retry 3 --progress-bar "${hdr[@]}" -o "$tmp" "$BASE/$asset"
+  fi
   got_sha="$(sha256 "$tmp")"
   if [ "$got_sha" != "$want_sha" ]; then
     rm -f "$tmp"
