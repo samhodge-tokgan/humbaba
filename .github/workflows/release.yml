@@ -31,7 +31,7 @@ jobs:
             platform: macos
           - os: ubuntu-latest   # Linux x86-64 (CUDA)
             platform: linux
-          - os: windows-latest  # Windows x64 (CUDA)
+          - os: windows-2022    # Windows x64 (CUDA) — pinned for the VS 2022 generator
             platform: windows
     runs-on: ${{ matrix.os }}
     steps:

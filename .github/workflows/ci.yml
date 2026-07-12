@@ -47,15 +47,23 @@ jobs:
           BIN=build/DepthAnything3.ofx.bundle/Contents/MacOS/DepthAnything3.ofx
           test -f build/DepthAnything3.ofx.bundle/Contents/Info.plist
           test -f "$BIN"
-          test -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime.1.dylib
+          # ONNX Runtime is privately renamed (isolation) — see docs/HOST_COMPATIBILITY.md.
+          test -f build/DepthAnything3.ofx.bundle/Contents/Frameworks/libonnxruntime_da3.1.dylib
+          # The .ofx must reference the private install name, not the stock one.
+          REFS="$(otool -L "$BIN")"
+          case "$REFS" in *libonnxruntime_da3.1.dylib*) ;; *) echo "ofx not repointed to private ORT"; exit 1;; esac
+          case "$REFS" in *@rpath/libonnxruntime.1.dylib*) echo "ofx still references stock ORT"; exit 1;; esac
           # Shell pattern matching, not `... | grep -q` (SIGPIPE under pipefail).
           ARCHES="$(lipo -info "$BIN")"
           echo "== arch == $ARCHES"
           case "$ARCHES" in *arm64*) ;; *) echo "missing arm64"; exit 1;; esac
+          # Isolation (D0): ONLY the two OFX entry points may be exported.
           SYMS="$(nm -gU "$BIN")"
-          echo "== OFX symbols =="
+          echo "== exported symbols ==" ; echo "$SYMS"
           case "$SYMS" in *OfxGetPlugin*) echo "OfxGetPlugin present" ;; *) echo "missing OfxGetPlugin"; exit 1;; esac
           case "$SYMS" in *OfxGetNumberOfPlugins*) ;; *) echo "missing OfxGetNumberOfPlugins"; exit 1;; esac
+          NSYMS="$(nm -gU "$BIN" | grep -c ' T ')"
+          test "$NSYMS" -le 2 || { echo "too many exported symbols ($NSYMS); isolation leak"; exit 1; }
 
       - name: Verify CoreML EP available at runtime
         run: |
@@ -127,7 +135,8 @@ jobs:
 
   build-windows:
     name: Build .ofx bundle (ONNX/CUDA, Windows x64)
-    runs-on: windows-latest   # CPU-only runner: validates the MSVC build, Win64
+    runs-on: windows-2022     # pin: has VS 2022 for the "Visual Studio 17 2022" generator.
+                              # CPU-only runner: validates the MSVC build, Win64
                               # bundle layout, and that the CUDA-enabled ORT links.
                               # Actual GPU inference is verified on a self-hosted
                               # CUDA box (see docs/WINDOWS.md).
