@@ -77,6 +77,19 @@ export OFX_PLUGIN_PATH="$HOME/OFX/Plugins"
 
 `cmake --install build` installs to `~/OFX/Plugins` by default.
 
+### Models
+
+Release installers are model-less (to stay under GitHub's 2 GB asset limit). Pull the
+models into the installed bundle's `Contents/Resources/` with the bundled fetch script
+(SHA-256-verified, idempotent):
+
+```bash
+# auto-detects the installed bundle; use sudo for a system-wide install dir
+tools/fetch_models.sh            # or: sudo tools/fetch_models.sh
+```
+
+Or point the plugin's `modelFile` param at an existing `.onnx`.
+
 ## Headless verification (Natron)
 
 Any OFX host works; we test with the portable Linux Natron

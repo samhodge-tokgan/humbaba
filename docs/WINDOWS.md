@@ -84,6 +84,18 @@ Copy-Item -Recurse build\DepthAnything3.ofx.bundle "$env:CommonProgramFiles\OFX\
 $env:OFX_PLUGIN_PATH = "C:\path\to\dir-containing-the-bundle"
 ```
 
+## Models
+
+Release installers are model-less (to stay under GitHub's 2 GB asset limit). Pull the
+models into the installed bundle's `Contents\Resources\` with the bundled fetch script
+(SHA-256-verified, idempotent) — use an **elevated** PowerShell for the system OFX dir:
+
+```powershell
+.\fetch_models.ps1
+```
+
+Or point the plugin's `modelFile` param at an existing `.onnx`.
+
 ## Verification
 
 Standalone GPU smoke test (no host):
