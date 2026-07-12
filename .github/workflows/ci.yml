@@ -182,3 +182,39 @@ jobs:
           name: DepthAnything3-ofx-bundle-windows
           path: build/DepthAnything3.ofx.bundle
           if-no-files-found: error
+
+  gpu-smoke:
+    name: GPU inference smoke (self-hosted CUDA)
+    # Runs on a self-hosted Windows box with NVIDIA GPUs (2x RTX 3090, CUDA 12.8,
+    # cuDNN 9 on PATH). GitHub-hosted runners have no GPU, so this is the only job
+    # that exercises ACTUAL CUDA inference + cross-platform depth parity.
+    runs-on: [self-hosted, cuda]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ort_check (CUDA ORT)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DDA3_WITH_ONNX=ON
+          cmake --build build --config Release --target ort_check --parallel
+
+      - name: Run DA3 on GPU + assert CUDA + depth parity
+        shell: pwsh
+        env:
+          # Model is pre-staged on the runner (see docs/HOST_COMPATIBILITY.md); it is
+          # not re-downloaded each run. Override with the DA3_MODEL repo/runner var.
+          DA3_MODEL: ${{ vars.DA3_MODEL || 'C:\dev\da3-models\DA3METRIC-LARGE-dyn.onnx' }}
+        run: |
+          if (-not (Test-Path $env:DA3_MODEL)) { throw "model not staged at $env:DA3_MODEL" }
+          $out = (& build/Release/ort_check.exe $env:DA3_MODEL | Out-String)
+          Write-Host $out
+          if ($out -notmatch "CUDA EP available: YES") { throw "CUDA EP not available on the runner" }
+          if ($out -notmatch "session created \(CUDA\)") { throw "session did not run on CUDA (CPU fallback?)" }
+          $m = [regex]::Match($out, "mean=([0-9.]+)")
+          if (-not $m.Success) { throw "could not parse depth mean from ort_check output" }
+          $mean = [double]$m.Groups[1].Value
+          Write-Host "depth mean = $mean (expected ~0.7026, cross-platform parity)"
+          if ([math]::Abs($mean - 0.7026) -gt 0.01) {
+            throw "depth mean $mean out of parity tolerance (expected ~0.7026)"
+          }
+          Write-Host "GPU smoke OK: CUDA session created and depth parity holds."
