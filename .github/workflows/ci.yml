@@ -162,7 +162,9 @@ jobs:
           $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
           if (-not $dumpbin) { throw "could not locate dumpbin.exe via vswhere" }
           Write-Host "dumpbin: $dumpbin"
-          $exports = & $dumpbin /exports "$arch\DepthAnything3.ofx"
+          # Out-String: collapse the line array to one string so -match is a boolean
+          # (on an array, -match returns the matching elements, not true/false).
+          $exports = (& $dumpbin /exports "$arch\DepthAnything3.ofx" | Out-String)
           if ($exports -notmatch "OfxGetNumberOfPlugins") { throw "missing OfxGetNumberOfPlugins export" }
           if ($exports -notmatch "OfxGetPlugin") { throw "missing OfxGetPlugin export" }
           Write-Host "Win64 bundle + OFX exports OK"
@@ -170,8 +172,8 @@ jobs:
       - name: Verify CUDA EP compiled into the ORT package
         shell: pwsh
         run: |
-          $out = & build/Release/ort_check.exe
-          $out
+          $out = (& build/Release/ort_check.exe | Out-String)
+          Write-Host $out
           if ($out -notmatch "CUDAExecutionProvider") { throw "CUDA EP missing from ORT package" }
 
       - name: Upload Windows bundle artifact
