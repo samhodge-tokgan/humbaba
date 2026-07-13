@@ -60,10 +60,39 @@ ONNX Runtime coexists with **no clash** — the whole point of exporting only th
 points + renaming the bundled ORT. (Install detail: Nuke doesn't scan `~/Library/OFX/Plugins`
 by default; point it there with `OFX_PLUGIN_PATH`, or install to `/Library/OFX/Plugins`.)
 
+### Nuke on Windows — two DLL-isolation axes (found 2026-07-13, Nuke 16.1v3)
+
+Testing DA3 in **Nuke 16.1 on Windows** surfaced two distinct problems, diagnosed in
+that host's own process:
+
+1. **`onnxruntime.dll` base-name collision with Windows ML — ✅ FIXED in 0.7.0.**
+   Windows 11 ships `C:\Windows\System32\onnxruntime.dll` (Windows ML, ORT `1.17.x`).
+   Nuke makes it resident; the Windows loader dedups DLLs by base name, so our
+   full-path load of a same-named `onnxruntime.dll` returned the **OS** module — binding
+   us to 1.17 and rejecting our API-27 calls (`only [1,17] supported`) / crashing. Fixed
+   by privately renaming the bundled runtime to **`onnxruntime_da3.dll`** (the delay-load
+   hook loads that name). Providers don't import `onnxruntime.dll` (shared-provider
+   bridge), so no PE patching was needed. **Proven:** in a process with System32's 1.17
+   resident, `onnxruntime_da3.dll` (1.27) loads as a *distinct* module and both coexist.
+
+2. **MSVC runtime version — OPEN.** Prebuilt ORT 1.27 needs the dynamic VC++ runtime
+   **≥ 14.40**. Nuke 16.1 bundles **14.36** in its app dir, which wins the search order
+   and becomes the process's only `MSVCP140.dll` — so `onnxruntime_da3.dll` fails to
+   initialize (`LoadLibrary` error 1114). Not fixable from inside the plugin by bundling
+   a newer redist (can't have two `MSVCP140.dll` in one process). **Proper fix: build the
+   bundled ONNX Runtime from source with the *static* MSVC runtime** (`--enable_msvc_static_runtime`)
+   so it carries no external CRT dependency and is immune to whatever the host bundles.
+   Interim per-machine workaround: rename Nuke's bundled `*140*.dll` aside so it uses the
+   `System32` redist (see `docs/WINDOWS.md`). Works fine today wherever the CRT is current
+   (Resolve on Windows; Nuke on macOS via CoreML; any host with a ≥14.40 redist and no
+   old app-dir copy).
+
 Still open on the host-compat front:
-- **Nuke on Linux / Windows (CUDA)** — the real coexistence risk is there, not on macOS:
-  Nuke ships its own CUDA/cuDNN and pins a CUDA major per release, so our CUDA-EP ORT could
-  contend with Nuke's runtime (cuDNN 9.x SONAME sharing, VRAM). See `HOST_COMPATIBILITY.md`.
+- **Static-CRT ONNX Runtime build (Windows, maybe Linux)** — see axis 2 above; the
+  general fix for host-bundled-runtime skew. Requires building ORT from source in CI.
+- **Nuke on Linux (CUDA)** — Nuke ships its own CUDA/cuDNN and pins a CUDA major per
+  release, so our CUDA-EP ORT could contend with Nuke's runtime (cuDNN 9.x SONAME
+  sharing, VRAM). See `HOST_COMPATIBILITY.md`.
 - **Co-load clash test** — a CI harness that loads our bundle alongside another ORT-using
   OFX plugin to prove the isolation under a genuine duplicate-library scenario.
 

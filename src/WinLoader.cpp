@@ -9,8 +9,16 @@
 // We solve this WITHOUT touching the process-wide DLL search order (which could
 // break the host): onnxruntime.dll is delay-loaded (see CMake /DELAYLOAD), and the
 // delay-load helper calls the hook below the first time an ORT symbol is used. The
-// hook loads onnxruntime.dll by explicit full path from this module's directory.
+// hook loads our ONNX Runtime by explicit full path from this module's directory.
 // ORT then loads its provider DLLs from that same directory itself.
+//
+// CRITICAL: the bundled runtime is renamed to a PRIVATE base name (onnxruntime_da3.dll,
+// see CMake OFX_LIB_BUNDLED) and the hook loads THAT, not "onnxruntime.dll". Windows
+// ships its own onnxruntime.dll in System32 (Windows ML), and hosts such as Nuke make
+// it resident; because the loader keys modules by base name, a LoadLibraryExW of our
+// full path to a file named "onnxruntime.dll" would just return the already-resident
+// System32 module (a different, ABI-incompatible ORT) — binding us to ORT 1.17 and
+// failing our API-27 calls. A unique base name can never be deduplicated against it.
 #ifdef _WIN32
 
 #define WIN32_LEAN_AND_MEAN
@@ -32,7 +40,9 @@ static FARPROC WINAPI DelayHook(unsigned event, PDelayLoadInfo info) {
       DWORD k = n;
       while (k > 0 && path[k - 1] != L'\\' && path[k - 1] != L'/') --k;
       path[k] = 0;
-      static const wchar_t kDll[] = L"onnxruntime.dll";
+      // Load our PRIVATELY-NAMED runtime (never the base name "onnxruntime.dll",
+      // which collides with Windows ML's System32 copy — see file header).
+      static const wchar_t kDll[] = L"onnxruntime_da3.dll";
       if (k + (DWORD)wcslen(kDll) < MAX_PATH) {
         wcscat_s(path, MAX_PATH, kDll);
         HMODULE h = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);

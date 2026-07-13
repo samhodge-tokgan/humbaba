@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DepthAnything3OFX VERSION 0.6.1 LANGUAGES CXX)
+project(DepthAnything3OFX VERSION 0.7.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Options
@@ -134,8 +134,14 @@ elseif(WIN32)
   set(OFX_LIB_DIR "Win64")         # DLLs alongside the .ofx
   set(OFX_RPATH "")                # Windows has no rpath; DLLs found via loader dir
   set(OFX_LIB_ORIG "onnxruntime.dll")
-  set(OFX_LIB_BUNDLED "onnxruntime.dll")  # Windows rename needs PE import patching of
-                                          # the providers too; deferred (see WinLoader).
+  # The .ofx delay-imports "onnxruntime.dll"; the WinLoader delay hook redirects that
+  # import to this PRIVATE name. Without it, Windows ships its own onnxruntime.dll in
+  # System32 (Windows ML, a DIFFERENT ORT version) — hosts like Nuke make it resident,
+  # and the loader's base-name dedup then binds us to the OS copy (ORT 1.17) instead of
+  # ours, so our API-27 calls are rejected / crash. The provider DLLs do NOT import
+  # onnxruntime.dll (shared-provider bridge via onnxruntime_providers_shared.dll), so no
+  # PE patching is needed; ORT locates them relative to its own (renamed) module dir.
+  set(OFX_LIB_BUNDLED "onnxruntime_da3.dll")
 else()                             # Linux
   # OFX packaging spec: the 64-bit Linux arch dir is "Linux-x86-64" (hyphens).
   # Using an underscore makes OFX hosts (Natron) silently skip the binary.

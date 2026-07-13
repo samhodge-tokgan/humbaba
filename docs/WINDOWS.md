@@ -28,28 +28,61 @@ DepthAnything3.ofx.bundle\
   Contents\
     Win64\                              # OFX-spec arch dir for 64-bit Windows
       DepthAnything3.ofx                # the plugin DLL (exports OfxGetNumberOfPlugins/OfxGetPlugin)
-      onnxruntime.dll
+      onnxruntime_da3.dll               # our ONNX Runtime, PRIVATELY renamed (see below)
       onnxruntime_providers_cuda.dll
       onnxruntime_providers_tensorrt.dll
       onnxruntime_providers_shared.dll
     Resources\                          # optional: bundled *.onnx models (release build)
 ```
 
-### How the plugin finds its bundled onnxruntime.dll
+### How the plugin finds — and isolates — its bundled ONNX Runtime
 
 Windows does **not** search a `LoadLibrary`'d module's own directory for that
 module's dependencies, so a normally-linked `onnxruntime.dll` next to the `.ofx`
 would fail to resolve when a host loads the plugin. We solve this without touching
 the host's DLL search order:
 
-- `onnxruntime.dll` is **delay-loaded** (`/DELAYLOAD:onnxruntime.dll`).
+- The `.ofx` **delay-loads** `onnxruntime.dll` (`/DELAYLOAD:onnxruntime.dll`).
 - [`src/WinLoader.cpp`](../src/WinLoader.cpp) installs a delay-load hook that loads
-  `onnxruntime.dll` by **explicit full path** from the plugin's own directory
+  our runtime by **explicit full path** from the plugin's own directory
   (`Contents\Win64`) with `LOAD_WITH_ALTERED_SEARCH_PATH`. ORT then loads its
-  provider DLLs from that same directory itself.
+  provider DLLs (which are located relative to its own module dir) itself.
+
+**Private name — critical (fixed in 0.7.0).** The bundled runtime is renamed to
+`onnxruntime_da3.dll` and the hook loads *that*, never the bare `onnxruntime.dll`.
+The reason: **Windows 11 ships its own `onnxruntime.dll` in `System32`** (part of
+Windows ML — version `1.17.x`). Windows keys loaded modules by **base name**, so if
+any host component makes the OS copy resident first (Nuke triggers Windows ML), a
+`LoadLibraryExW` of our full path to a file *also* named `onnxruntime.dll` just
+returns the already-resident **OS** module — binding the plugin to ORT 1.17 instead
+of ours. Our API-27 calls then fail (`requested API version [27] … only [1,17]
+supported`) or crash. A unique base name can never be deduplicated against the OS
+copy; the two runtimes coexist as distinct modules. (macOS/Linux use the same
+private-naming trick via install-name / soname — see `OFX_LIB_BUNDLED` in CMake.)
 
 The bundle-relative model lookup in the plugins uses
 `GetModuleHandleExW`/`GetModuleFileNameA` (the Windows analogue of `dladdr`).
+
+### Runtime requirement: Visual C++ 2015–2022 redistributable ≥ 14.40
+
+The prebuilt ONNX Runtime 1.27 is linked against the **dynamic** MSVC C++ runtime
+(`MSVCP140.dll` / `VCRUNTIME140*.dll`) and requires version **≥ 14.40** (VS 2022
+17.10). A too-old runtime makes `onnxruntime_da3.dll` fail to initialize with
+`LoadLibrary` error **1114** (`ERROR_DLL_INIT_FAILED`). Most machines already have a
+current redist in `System32`; if not, install the latest
+[VC++ redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+
+> **Nuke 16.1 caveat (known limitation).** Nuke bundles its own **14.36** VC runtime
+> in its application directory (`C:\Program Files\Nuke16.1v3\MSVCP140.dll`, …). Because
+> the app directory wins the DLL search order, that 14.36 copy becomes resident
+> process-wide, and there can only be one `MSVCP140.dll` per process — so even a
+> current `System32` redist is shadowed, and ORT 1.27 fails to init (error 1114).
+> The plugin works in Nuke on macOS (CoreML, no MSVC runtime) and in DaVinci Resolve
+> on Windows (ships a current runtime); only **Nuke-on-Windows** hits this.
+> Workarounds until a static-CRT ORT build lands (tracked in [BACKLOG](BACKLOG.md)):
+> rename Nuke's bundled `msvcp140*.dll` / `vcruntime140*.dll` / `concrt140.dll` /
+> `vccorlib140.dll` aside so Nuke uses the `System32` 14.44 copies (reversible; only
+> for names `System32` also provides), or use a Nuke build that ships a newer runtime.
 
 ## Runtime requirement: cuDNN 9 (host-provided)
 
