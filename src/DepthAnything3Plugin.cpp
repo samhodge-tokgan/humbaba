@@ -37,7 +37,7 @@
 #endif
 
 #define kPluginName "Depth Anything 3"
-#define kPluginGrouping "TokGan"
+#define kPluginGrouping "Tokgan"
 #define kPluginDescription \
   "Predict metric depth (decimeters, float32) from an ACEScg image using " \
   "Depth Anything 3 via ONNX Runtime with hardware acceleration."

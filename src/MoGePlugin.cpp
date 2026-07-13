@@ -31,7 +31,7 @@
 #include "Register.h"
 
 #define kMoGeName "MoGe Focal"
-#define kMoGeGrouping "TokGan"
+#define kMoGeGrouping "Tokgan"
 #define kMoGeDescription \
   "Estimate camera focal length / FOV / intrinsics from a single frame using MoGe-2 " \
   "(ONNX Runtime + CoreML). Press Analyze; the image is passed through."

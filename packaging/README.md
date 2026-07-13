@@ -76,7 +76,7 @@ globs `Contents/Frameworks/*.dylib` rather than hardcoding a name.
 - **Windows:** extract the `.zip` into `%CommonProgramFiles%\OFX\Plugins`.
 
 Then run the `fetch_models` script (above), launch your OFX host, and the plugins appear under
-**TokGan › Depth Anything 3** (plus MoGe Focal, Lens Distortion).
+**Tokgan › Depth Anything 3** (plus MoGe Focal, Lens Distortion).
 
 **GPU prerequisite (Linux/Windows):** the CUDA execution provider needs an NVIDIA driver, the
 **CUDA 12.x runtime**, and **cuDNN 9** on the loader path (see [`../docs/LINUX.md`](../docs/LINUX.md) /

@@ -58,7 +58,7 @@ see [`packaging/README.md`](packaging/README.md)):
 | **Linux** (x86-64) | `DepthAnything3-<ver>-linux-x86_64.tar.xz` | extract to `/usr/OFX/Plugins` or `~/OFX/Plugins` |
 | **Windows** (x64) | `DepthAnything3-<ver>-windows-x64.zip` | extract to `%CommonProgramFiles%\OFX\Plugins` |
 
-The plugins then appear in your OFX host under **TokGan › Depth Anything 3** (and MoGe Focal,
+The plugins then appear in your OFX host under **Tokgan › Depth Anything 3** (and MoGe Focal,
 Lens Distortion).
 
 > **Models are downloaded, not bundled.** To stay under GitHub's 2 GB per-asset limit, the

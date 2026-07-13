@@ -82,7 +82,7 @@ static std::string ld_bundleModel() {
 }
 
 #define kLdName "Lens Distortion"
-#define kLdGrouping "TokGan"
+#define kLdGrouping "Tokgan"
 #define kLdDescription \
   "Estimate / hold lens distortion (Brown-Conrady) and output OpenCV + 3DE " \
   "parameters and the overscan padding for CG re-distortion. Image is passed through."
