@@ -83,6 +83,58 @@ static inline int budgetToLongSide(int mb) {
   return v;
 }
 
+static inline float clamp01(float v) { return std::min(std::max(v, 0.0f), 1.0f); }
+
+// Bit-depth-aware pixel IO. Hosts hand us RGBA in float, 8-bit or 16-bit (e.g. an
+// 8-bit DaVinci Resolve timeline). The depth model works in float, so we normalize
+// on read and quantize on write. Integer inputs are treated as display-referred
+// sRGB (Rec.709) — an 8-bit 0-255 value maps straight to the [0,1] sRGB the model
+// expects, bypassing the ACEScg->sRGB step (which only applies to linear float).
+static inline void readRGBA01(const void* p, OFX::BitDepthEnum bd, float* rgb, float* a) {
+  switch (bd) {
+    case OFX::eBitDepthUByte: {
+      const unsigned char* s = static_cast<const unsigned char*>(p);
+      rgb[0] = s[0] * (1.0f / 255.0f); rgb[1] = s[1] * (1.0f / 255.0f);
+      rgb[2] = s[2] * (1.0f / 255.0f); *a = s[3] * (1.0f / 255.0f); break;
+    }
+    case OFX::eBitDepthUShort: {
+      const unsigned short* s = static_cast<const unsigned short*>(p);
+      rgb[0] = s[0] * (1.0f / 65535.0f); rgb[1] = s[1] * (1.0f / 65535.0f);
+      rgb[2] = s[2] * (1.0f / 65535.0f); *a = s[3] * (1.0f / 65535.0f); break;
+    }
+    default: {  // eBitDepthFloat
+      const float* s = static_cast<const float*>(p);
+      rgb[0] = s[0]; rgb[1] = s[1]; rgb[2] = s[2]; *a = s[3]; break;
+    }
+  }
+}
+
+// Write depth z (decimeters) to R=G=B and a normalized alpha, in the dst's depth.
+// Float keeps full metric precision; integer clips quantize/clamp the decimeter value
+// (use a float/32-bit timeline for lossless depth).
+static inline void writeDepthPixel(void* p, OFX::BitDepthEnum bd, float z, float a01) {
+  switch (bd) {
+    case OFX::eBitDepthUByte: {
+      unsigned char* d = static_cast<unsigned char*>(p);
+      unsigned char zv =
+          static_cast<unsigned char>(std::lround(std::min(std::max(z, 0.0f), 255.0f)));
+      d[0] = d[1] = d[2] = zv;
+      d[3] = static_cast<unsigned char>(std::lround(clamp01(a01) * 255.0f)); break;
+    }
+    case OFX::eBitDepthUShort: {
+      unsigned short* d = static_cast<unsigned short*>(p);
+      unsigned short zv =
+          static_cast<unsigned short>(std::lround(std::min(std::max(z, 0.0f), 65535.0f)));
+      d[0] = d[1] = d[2] = zv;
+      d[3] = static_cast<unsigned short>(std::lround(clamp01(a01) * 65535.0f)); break;
+    }
+    default: {  // eBitDepthFloat
+      float* d = static_cast<float*>(p);
+      d[0] = d[1] = d[2] = z; d[3] = a01; break;
+    }
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Passthrough copy processor (used when ONNX is unavailable or depth unsupported).
 
@@ -210,9 +262,15 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
   std::unique_ptr<OFX::Image> dst(_dstClip->fetchImage(args.time));
   std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(args.time));
   if (!dst.get() || !src.get()) return false;
-  if (dst->getPixelDepth() != OFX::eBitDepthFloat ||
-      dst->getPixelComponents() != OFX::ePixelComponentRGBA)
+  // Components must be RGBA (all we advertise); depth may be float / 8-bit / 16-bit
+  // — normalized on read and quantized on write by the pixel helpers below.
+  if (dst->getPixelComponents() != OFX::ePixelComponentRGBA ||
+      src->getPixelComponents() != OFX::ePixelComponentRGBA)
     return false;
+  const OFX::BitDepthEnum sbd = src->getPixelDepth();
+  const OFX::BitDepthEnum dbd = dst->getPixelDepth();
+  const bool srcInteger =
+      (sbd == OFX::eBitDepthUByte || sbd == OFX::eBitDepthUShort);
 
   const OfxRectI rod = src->getRegionOfDefinition();
   const int W = rod.x2 - rod.x1;
@@ -270,19 +328,22 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
   std::vector<float> rgb(static_cast<size_t>(W) * H * 3);
   for (int y = 0; y < H; ++y) {
     for (int x = 0; x < W; ++x) {
-      const float* s =
-          static_cast<const float*>(src->getPixelAddress(rod.x1 + x, rod.y1 + y));
+      const void* s = src->getPixelAddress(rod.x1 + x, rod.y1 + y);
       float* d = rgb.data() + (static_cast<size_t>(y) * W + x) * 3;
       if (!s) {
         d[0] = d[1] = d[2] = 0.f;
         continue;
       }
-      if (acescg) {
-        acescgToSrgb(s[0], s[1], s[2], d);
+      float t[3], a;
+      readRGBA01(s, sbd, t, &a);  // normalized [0,1]
+      // ACEScg->sRGB only applies to linear float input; integer input is already
+      // display-referred sRGB (per the 8-bit = 0-255 sRGB Rec.709 assumption).
+      if (acescg && !srcInteger) {
+        acescgToSrgb(t[0], t[1], t[2], d);
       } else {
-        d[0] = std::min(std::max(s[0], 0.f), 1.f);
-        d[1] = std::min(std::max(s[1], 0.f), 1.f);
-        d[2] = std::min(std::max(s[2], 0.f), 1.f);
+        d[0] = clamp01(t[0]);
+        d[1] = clamp01(t[1]);
+        d[2] = clamp01(t[2]);
       }
     }
   }
@@ -299,22 +360,26 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
   _gain->getValue(gain);
   const float scale = static_cast<float>(10.0 * gain);  // meters -> decimeters * gain
 
-  // Write depth to R=G=B, alpha passed through, over the render window.
+  // Write depth to R=G=B, alpha passed through, over the render window. Pixel address
+  // is fetched per pixel because the element size depends on the dst bit depth.
   const OfxRectI w = args.renderWindow;
   for (int y = w.y1; y < w.y2; ++y) {
     if (abort()) break;
-    float* dpix = static_cast<float*>(dst->getPixelAddress(w.x1, y));
     for (int x = w.x1; x < w.x2; ++x) {
       int lx = x - rod.x1, ly = y - rod.y1;
       float z = 0.f;
       if (lx >= 0 && lx < W && ly >= 0 && ly < H)
         z = res.depth[static_cast<size_t>(ly) * W + lx] * scale;
-      const float* s = static_cast<const float*>(src->getPixelAddress(x, y));
-      dpix[0] = z;
-      dpix[1] = z;
-      dpix[2] = z;
-      dpix[3] = s ? s[3] : 1.0f;
-      dpix += 4;
+      void* dpix = dst->getPixelAddress(x, y);
+      if (!dpix) continue;
+      // Alpha passthrough (normalized), read in the source's depth.
+      float a = 1.0f;
+      const void* s = src->getPixelAddress(x, y);
+      if (s) {
+        float t[3];
+        readRGBA01(s, sbd, t, &a);
+      }
+      writeDepthPixel(dpix, dbd, z, a);
     }
   }
   return true;
@@ -348,8 +413,12 @@ void DepthAnything3Plugin::renderPassthrough(const OFX::RenderArguments& args) {
 
 void DepthAnything3Plugin::render(const OFX::RenderArguments& args) {
 #if DA3_WITH_ONNX
-  if (_dstClip->getPixelDepth() == OFX::eBitDepthFloat &&
-      _dstClip->getPixelComponents() == OFX::ePixelComponentRGBA) {
+  const OFX::BitDepthEnum bd = _dstClip->getPixelDepth();
+  // Depth runs for RGBA in float / 8-bit / 16-bit; renderDepth normalizes the input
+  // to float and quantizes the output back to the host's depth.
+  if (_dstClip->getPixelComponents() == OFX::ePixelComponentRGBA &&
+      (bd == OFX::eBitDepthFloat || bd == OFX::eBitDepthUByte ||
+       bd == OFX::eBitDepthUShort)) {
     if (renderDepth(args)) return;
     // fall through to passthrough on failure so the graph still renders
   }
