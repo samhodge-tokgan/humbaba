@@ -153,7 +153,9 @@ jobs:
         shell: pwsh
         run: |
           $arch = "build/DepthAnything3.ofx.bundle/Contents/Win64"
-          foreach ($f in @("DepthAnything3.ofx","onnxruntime.dll",
+          # ORT is bundled under a PRIVATE name (onnxruntime_da3.dll) to avoid the
+          # base-name collision with Windows ML's C:\Windows\System32\onnxruntime.dll.
+          foreach ($f in @("DepthAnything3.ofx","onnxruntime_da3.dll",
                            "onnxruntime_providers_cuda.dll","onnxruntime_providers_shared.dll")) {
             if (!(Test-Path "$arch/$f")) { throw "missing $f" }
           }
