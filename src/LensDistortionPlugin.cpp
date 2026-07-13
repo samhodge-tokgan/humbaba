@@ -183,7 +183,7 @@ void LensDistortionPlugin::estimate(double time) {
   }
   if (model.empty()) model = ld_bundleModel();
   if (model.empty()) {
-    setPersistentMessage(OFX::Message::eMessageMessage, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageMessage, "",
                          "No AnyCalib model available. Set parameters manually (or a sidecar); "
                          "overscan and 3DE outputs update live.");
     return;
@@ -191,14 +191,14 @@ void LensDistortionPlugin::estimate(double time) {
 
   std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(time));
   if (!src.get() || src->getPixelDepth() != OFX::eBitDepthFloat) {
-    setPersistentMessage(OFX::Message::eMessageError, "", "AnyCalib needs a float source image.");
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", "AnyCalib needs a float source image.");
     return;
   }
   const OfxRectI rod = src->getRegionOfDefinition();
   const int W = rod.x2 - rod.x1, H = rod.y2 - rod.y1;
   const int nc = src->getPixelComponents() == OFX::ePixelComponentRGBA ? 4 : 1;
   if (W <= 0 || H <= 0 || nc < 3) {
-    setPersistentMessage(OFX::Message::eMessageError, "", "AnyCalib needs an RGB(A) float image.");
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", "AnyCalib needs an RGB(A) float image.");
     return;
   }
   bool acescg = true;
@@ -217,16 +217,16 @@ void LensDistortionPlugin::estimate(double time) {
 
   da3::AnyCalibEngine eng(model, da3::ComputeUnits::All, 0);
   if (!eng.last_error().empty()) {
-    setPersistentMessage(OFX::Message::eMessageError, "", eng.last_error());
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", eng.last_error());
     return;
   }
   da3::CameraFit fit = eng.Estimate(rgb.data(), W, H);
   if (!fit.ok) {
-    setPersistentMessage(OFX::Message::eMessageError, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "",
                          eng.last_error().empty() ? "AnyCalib fit failed" : eng.last_error());
     return;
   }
-  clearPersistentMessage();
+  da3reg::SafeClearMessage(*this);
   // AnyCalib's radial maps directly to OpenCV: fx,fy,cx,cy,k1,k2 (k3=p1=p2=0).
   _focal->setValue(0.5 * (fit.fx + fit.fy));
   _k1->setValue(fit.k1); _k2->setValue(fit.k2); _k3->setValue(0.0);

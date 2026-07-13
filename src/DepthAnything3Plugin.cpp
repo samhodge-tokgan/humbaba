@@ -279,7 +279,7 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
 
   const std::string modelPath = resolveModelPath();
   if (modelPath.empty()) {
-    setPersistentMessage(OFX::Message::eMessageError, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "",
                          "No ONNX model set (parameter 'Model file' or $DA3_MODEL_PATH).");
     return false;
   }
@@ -315,7 +315,7 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
     _engine = std::make_unique<da3::DepthEngine>(modelPath, units, threads, pw, ph);
     _engineKey = key;
     if (!_engine->last_error().empty()) {
-      setPersistentMessage(OFX::Message::eMessageError, "", _engine->last_error());
+      da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", _engine->last_error());
       _engine.reset();
       _engineKey.clear();
       return false;
@@ -350,11 +350,11 @@ bool DepthAnything3Plugin::renderDepth(const OFX::RenderArguments& args) {
 
   da3::DepthResult res = _engine->Run(rgb.data(), W, H);
   if (res.depth.empty()) {
-    setPersistentMessage(OFX::Message::eMessageError, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "",
                          _engine->last_error().empty() ? "Inference failed" : _engine->last_error());
     return false;
   }
-  clearPersistentMessage();
+  da3reg::SafeClearMessage(*this);
 
   double gain = 1.0;
   _gain->getValue(gain);

@@ -175,20 +175,20 @@ void MoGePlugin::changedParam(const OFX::InstanceChangedArgs& /*args*/, const st
 void MoGePlugin::analyze(double time) {
   const std::string model = resolveModel();
   if (model.empty()) {
-    setPersistentMessage(OFX::Message::eMessageError, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "",
                          "No MoGe model set (parameter 'MoGe model', $MOGE_MODEL_PATH or bundle).");
     return;
   }
   std::unique_ptr<OFX::Image> src(_srcClip->fetchImage(time));
   if (!src.get() || src->getPixelDepth() != OFX::eBitDepthFloat) {
-    setPersistentMessage(OFX::Message::eMessageError, "", "MoGe needs a float source image.");
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", "MoGe needs a float source image.");
     return;
   }
   const OfxRectI rod = src->getRegionOfDefinition();
   const int W = rod.x2 - rod.x1, H = rod.y2 - rod.y1;
   const int nc = src->getPixelComponents() == OFX::ePixelComponentRGBA ? 4 : 1;
   if (W <= 0 || H <= 0 || nc < 3) {
-    setPersistentMessage(OFX::Message::eMessageError, "", "MoGe needs an RGB(A) float image.");
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", "MoGe needs an RGB(A) float image.");
     return;
   }
 
@@ -213,16 +213,16 @@ void MoGePlugin::analyze(double time) {
 
   da3::MoGeEngine eng(model, static_cast<da3::ComputeUnits>(cu), 0, tok, cap);
   if (!eng.last_error().empty()) {
-    setPersistentMessage(OFX::Message::eMessageError, "", eng.last_error());
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "", eng.last_error());
     return;
   }
   da3::FocalResult r = eng.EstimateFocal(rgb.data(), W, H, W, H, knownFov);
   if (!r.ok) {
-    setPersistentMessage(OFX::Message::eMessageError, "",
+    da3reg::SafeSetMessage(*this, OFX::Message::eMessageError, "",
                          eng.last_error().empty() ? "MoGe focal estimation failed" : eng.last_error());
     return;
   }
-  clearPersistentMessage();
+  da3reg::SafeClearMessage(*this);
   _focalPx->setValue(r.fx_px);
   _fovX->setValue(r.fov_x_deg);
   _fovY->setValue(r.fov_y_deg);
