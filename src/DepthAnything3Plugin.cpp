@@ -223,7 +223,14 @@ static std::string bundleModelPath() {
     DWORD n = GetModuleFileNameA(hm, buf, MAX_PATH);
     if (n > 0 && n < MAX_PATH) {
       std::string p(buf, n);  // ...\Contents\Win64\DepthAnything3.ofx
-      auto pos = p.rfind("\\Contents\\Win64\\");
+      // Match the "\Contents\" segment CASE-INSENSITIVELY: hosts load the bundle with
+      // whatever case they built the path in (Nuke uses lowercase "...\Contents\win64\"),
+      // and GetModuleFileNameA returns that load-time case. A case-sensitive rfind for
+      // "\Contents\Win64\" would then miss and the bundled model would appear absent.
+      std::string lower(p);
+      for (char& c : lower)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+      auto pos = lower.rfind("\\contents\\");
       if (pos != std::string::npos) {
         std::string cand = p.substr(0, pos) + "\\Contents\\Resources\\DA3METRIC-LARGE.onnx";
         if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) return cand;

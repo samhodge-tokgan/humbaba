@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DepthAnything3OFX VERSION 0.7.0 LANGUAGES CXX)
+project(DepthAnything3OFX VERSION 0.8.0 LANGUAGES CXX)
 
 # ---------------------------------------------------------------------------
 # Options
@@ -61,8 +61,16 @@ if(DA3_WITH_ONNX)
     set(ORT_SHLIB "lib/libonnxruntime.${DA3_ORT_VERSION}.dylib")
     set(DA3_ACCEL "CoreML")
   elseif(WIN32)
-    set(ORT_URL "${ORT_BASE}/onnxruntime-win-x64-gpu_cuda12-${DA3_ORT_VERSION}.zip")
-    # (hash added once pinned; FetchContent fetches without it meanwhile)
+    # Windows uses a STATIC-CRT ONNX Runtime built from source (NOT Microsoft's prebuilt),
+    # so the bundled runtime + providers carry no external MSVCP140/VCRUNTIME140 dependency
+    # and are immune to whatever VC++ runtime the host forces process-wide. (Nuke 16.1 ships
+    # MSVCP140 14.36 in its app dir; prebuilt ORT 1.27 needs >=14.40 and fails to init with
+    # LoadLibrary error 1114 — see docs/WINDOWS.md.) Built with --enable_msvc_static_runtime;
+    # CUDA archs sm_60/61/70/72/75/80/86/89/90 (-real) + 90-virtual PTX (Pascal->Hopper native,
+    # Blackwell+ via JIT). Hosted as a pinned repo release asset; rebuild recipe in the memory
+    # note / docs. TensorRT provider dropped (unused; would reintroduce a dynamic-CRT dep).
+    set(ORT_URL "https://github.com/samhodge-tokgan/humbaba/releases/download/ort-static-win-${DA3_ORT_VERSION}/onnxruntime-win-x64-static-cuda9arch-${DA3_ORT_VERSION}.zip")
+    set(ORT_HASH_ARG URL_HASH SHA256=76a9f67f3704486cc354824212492fcdc152bbe6801667140335aa9aa14026d4)
     set(ORT_SHLIB "lib/onnxruntime.dll")          # runtime (IMPORTED_LOCATION)
     set(ORT_IMPLIB "lib/onnxruntime.lib")         # import lib (IMPORTED_IMPLIB)
     set(DA3_ACCEL "CUDA")

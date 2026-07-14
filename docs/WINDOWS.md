@@ -63,26 +63,22 @@ private-naming trick via install-name / soname — see `OFX_LIB_BUNDLED` in CMak
 The bundle-relative model lookup in the plugins uses
 `GetModuleHandleExW`/`GetModuleFileNameA` (the Windows analogue of `dladdr`).
 
-### Runtime requirement: Visual C++ 2015–2022 redistributable ≥ 14.40
+### Runtime requirement: Visual C++ redistributable — none (static CRT, since 0.8.0)
 
-The prebuilt ONNX Runtime 1.27 is linked against the **dynamic** MSVC C++ runtime
-(`MSVCP140.dll` / `VCRUNTIME140*.dll`) and requires version **≥ 14.40** (VS 2022
-17.10). A too-old runtime makes `onnxruntime_da3.dll` fail to initialize with
-`LoadLibrary` error **1114** (`ERROR_DLL_INIT_FAILED`). Most machines already have a
-current redist in `System32`; if not, install the latest
-[VC++ redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+The bundled ONNX Runtime is built from source with the **static** MSVC C++ runtime
+(`--enable_msvc_static_runtime`), so `onnxruntime_da3.dll` and the provider DLLs carry
+**no external `MSVCP140.dll` / `VCRUNTIME140*.dll` dependency** (`dumpbin /dependents`
+shows only system + CUDA libs). There is **no VC++ redistributable to install**, and the
+runtime is immune to whatever VC++ version a host forces into the process.
 
-> **Nuke 16.1 caveat (known limitation).** Nuke bundles its own **14.36** VC runtime
-> in its application directory (`C:\Program Files\Nuke16.1v3\MSVCP140.dll`, …). Because
-> the app directory wins the DLL search order, that 14.36 copy becomes resident
-> process-wide, and there can only be one `MSVCP140.dll` per process — so even a
-> current `System32` redist is shadowed, and ORT 1.27 fails to init (error 1114).
-> The plugin works in Nuke on macOS (CoreML, no MSVC runtime) and in DaVinci Resolve
-> on Windows (ships a current runtime); only **Nuke-on-Windows** hits this.
-> Workarounds until a static-CRT ORT build lands (tracked in [BACKLOG](BACKLOG.md)):
-> rename Nuke's bundled `msvcp140*.dll` / `vcruntime140*.dll` / `concrt140.dll` /
-> `vccorlib140.dll` aside so Nuke uses the `System32` 14.44 copies (reversible; only
-> for names `System32` also provides), or use a Nuke build that ships a newer runtime.
+> **Nuke 16.1 (was a known limitation, now fixed).** Nuke bundles its own **14.36** VC
+> runtime in its app directory, which the loader makes resident process-wide. With the
+> old *prebuilt* ORT (dynamic CRT, needs ≥ 14.40) this shadowed any current `System32`
+> redist and ORT 1.27 failed to init with `LoadLibrary` error **1114**. The static-CRT
+> build (0.8.0) has no CRT import at all, so the host's runtime version is irrelevant —
+> **no `*140.dll` renaming or Nuke hacks required.** Verified in Nuke 16.1v3: the plugin
+> loads and renders a DA3 depth pass on CUDA. (History and the earlier per-machine
+> workaround are in [BACKLOG](BACKLOG.md).)
 
 ## Runtime requirement: cuDNN 9 (host-provided)
 

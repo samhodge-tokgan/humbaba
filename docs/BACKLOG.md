@@ -75,21 +75,27 @@ that host's own process:
    bridge), so no PE patching was needed. **Proven:** in a process with System32's 1.17
    resident, `onnxruntime_da3.dll` (1.27) loads as a *distinct* module and both coexist.
 
-2. **MSVC runtime version — OPEN.** Prebuilt ORT 1.27 needs the dynamic VC++ runtime
-   **≥ 14.40**. Nuke 16.1 bundles **14.36** in its app dir, which wins the search order
-   and becomes the process's only `MSVCP140.dll` — so `onnxruntime_da3.dll` fails to
-   initialize (`LoadLibrary` error 1114). Not fixable from inside the plugin by bundling
-   a newer redist (can't have two `MSVCP140.dll` in one process). **Proper fix: build the
-   bundled ONNX Runtime from source with the *static* MSVC runtime** (`--enable_msvc_static_runtime`)
-   so it carries no external CRT dependency and is immune to whatever the host bundles.
-   Interim per-machine workaround: rename Nuke's bundled `*140*.dll` aside so it uses the
-   `System32` redist (see `docs/WINDOWS.md`). Works fine today wherever the CRT is current
-   (Resolve on Windows; Nuke on macOS via CoreML; any host with a ≥14.40 redist and no
-   old app-dir copy).
+2. **MSVC runtime version — ✅ FIXED in 0.8.0.** Prebuilt ORT 1.27 needs the dynamic VC++
+   runtime **≥ 14.40**. Nuke 16.1 bundles **14.36** in its app dir, which wins the search
+   order and becomes the process's only `MSVCP140.dll` — so `onnxruntime_da3.dll` failed to
+   initialize (`LoadLibrary` error 1114). Not fixable from inside the plugin by bundling a
+   newer redist (can't have two `MSVCP140.dll` in one process). **Fixed by building the
+   bundled ONNX Runtime from source with the *static* MSVC runtime**
+   (`--enable_msvc_static_runtime`): `dumpbin /dependents` confirms the runtime + provider
+   DLLs carry **zero** `MSVCP140`/`VCRUNTIME140` imports, so the host's CRT version is
+   irrelevant and the 1114 failure is structurally impossible — no host hacks needed.
+   **Verified in Nuke 16.1v3**: the ctypes load that previously crashed now returns
+   `LOADED OK / ORT VERSION 1.27.1` inside Nuke's process, and a full DA3 depth render runs
+   on the RTX 3090 (CUDA EP, GPU-confirmed). The static ORT is a pinned repo release asset
+   (`ort-static-win-1.27.1`); Windows CMake FetchContent points at it (mac/Linux unchanged).
 
 Still open on the host-compat front:
-- **Static-CRT ONNX Runtime build (Windows, maybe Linux)** — see axis 2 above; the
-  general fix for host-bundled-runtime skew. Requires building ORT from source in CI.
+- **Static-CRT ONNX Runtime build — ✅ DONE for Windows (0.8.0), Linux still potential.**
+  See axis 2 above; the general fix for host-bundled-runtime skew. The Windows static ORT
+  is currently built from source out-of-CI and hosted as a pinned release asset
+  (`ort-static-win-1.27.1`); a from-source CI job would let it rebuild automatically on ORT
+  bumps. Linux (glibc/libstdc++ skew vs a host) could want the same treatment if a host
+  conflict surfaces.
 - **Nuke on Linux (CUDA)** — Nuke ships its own CUDA/cuDNN and pins a CUDA major per
   release, so our CUDA-EP ORT could contend with Nuke's runtime (cuDNN 9.x SONAME
   sharing, VRAM). See `HOST_COMPATIBILITY.md`.
