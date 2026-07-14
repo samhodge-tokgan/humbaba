@@ -31,18 +31,43 @@ jobs:
             platform: macos
           - os: ubuntu-latest   # Linux x86-64 (CUDA)
             platform: linux
+            # Build inside AlmaLinux 8 (glibc 2.28) so the .ofx loads on the VFX-standard
+            # RHEL/Rocky/Alma 8 hosts. ubuntu-latest links GLIBC_2.34 symbols that EL8 lacks.
+            container: quay.io/pypa/manylinux_2_28_x86_64
           - os: windows-2022    # Windows x64 (CUDA) — pinned for the VS 2022 generator
             platform: windows
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}   # empty for macOS/Windows (host); AlmaLinux 8 for Linux
     steps:
       - uses: actions/checkout@v4
 
       # --- Configure & build the MODEL-LESS bundle (no -DDA3_*_MODEL_FILE) ---
-      - name: Build (macOS / Linux)
-        if: matrix.platform != 'windows'
+      - name: Build (macOS)
+        if: matrix.platform == 'macos'
         run: |
           cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target DepthAnything3 -j3
+
+      - name: Build (Linux — manylinux_2_28 / glibc 2.28 for EL8 compatibility)
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          # Container runs as root; avoid git's "dubious ownership" on the checkout.
+          git config --global --add safe.directory '*'
+          # manylinux_2_28 ships cmake, git, patchelf and a modern gcc-toolset on PATH
+          # (all linking glibc 2.28); ensure xz is present for the .tar.xz packaging step.
+          command -v xz >/dev/null 2>&1 || dnf install -y xz || yum install -y xz
+          echo "toolchain:"; cmake --version | head -1; g++ --version | head -1; patchelf --version; git --version
+          cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target DepthAnything3 -j3
+          # Guard: fail the release if the .ofx needs a glibc newer than EL8's 2.28.
+          OFX=build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64/DepthAnything3.ofx
+          maxg=$(grep -ao 'GLIBC_[0-9.]*' "$OFX" | sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "max GLIBC required by .ofx: $maxg"
+          if [ "$(printf '%s\n2.28\n' "$maxg" | sort -V | tail -1)" != "2.28" ]; then
+            echo "::error::.ofx requires GLIBC_$maxg > 2.28 — not EL8/VFX-platform compatible"; exit 1
+          fi
+          echo "OK: glibc floor $maxg <= 2.28 (loads on RHEL/Rocky/Alma 8+)"
       - name: Build (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh

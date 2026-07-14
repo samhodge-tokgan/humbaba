@@ -78,20 +78,36 @@ jobs:
 
   build-linux:
     name: Build .ofx bundle (ONNX/CUDA, Linux x86_64)
-    runs-on: ubuntu-latest   # CPU-only runner: validates the cross-platform build,
-                             # bundle layout, and that the CUDA-enabled ORT links.
-                             # Actual GPU inference is verified on a self-hosted
-                             # CUDA box (see docs/LINUX.md).
+    runs-on: ubuntu-latest
+    # Build inside AlmaLinux 8 (glibc 2.28) so the .ofx loads on RHEL/Rocky/Alma 8 (the
+    # VFX Reference Platform). ubuntu-latest links GLIBC_2.34 symbols that EL8 lacks.
+    # GPU inference is verified separately on a self-hosted CUDA box (see docs/LINUX.md).
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install patchelf (privately renames the bundled ONNX Runtime)
-        run: sudo apt-get update && sudo apt-get install -y patchelf
+      - name: Prep container (EL8 build tools; patchelf privately renames the ORT)
+        run: |
+          git config --global --add safe.directory '*'
+          command -v patchelf >/dev/null 2>&1 || dnf install -y patchelf
+          command -v file     >/dev/null 2>&1 || dnf install -y file
+          echo "cmake: $(cmake --version | head -1)"; g++ --version | head -1; patchelf --version
 
       - name: Configure & build (ONNX Runtime CUDA package, Linux)
         run: |
           cmake -S . -B build -DDA3_WITH_ONNX=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target ort_check DepthAnything3 -j3
+
+      - name: Assert EL8 glibc floor (.ofx must not need > 2.28)
+        run: |
+          set -euo pipefail
+          OFX=build/DepthAnything3.ofx.bundle/Contents/Linux-x86-64/DepthAnything3.ofx
+          maxg=$(grep -ao 'GLIBC_[0-9.]*' "$OFX" | sed 's/GLIBC_//' | sort -V | tail -1)
+          echo "max GLIBC required by .ofx: $maxg"
+          if [ "$(printf '%s\n2.28\n' "$maxg" | sort -V | tail -1)" != "2.28" ]; then
+            echo "::error::.ofx requires GLIBC_$maxg > 2.28 — not EL8-compatible"; exit 1
+          fi
+          echo "OK: glibc floor $maxg <= 2.28 (loads on RHEL/Rocky/Alma 8+)"
 
       - name: Verify Linux bundle layout, ELF, OFX symbols and bundled runtime
         run: |
