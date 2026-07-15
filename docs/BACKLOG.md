@@ -102,6 +102,51 @@ Still open on the host-compat front:
 - **Co-load clash test** — a CI harness that loads our bundle alongside another ORT-using
   OFX plugin to prove the isolation under a genuine duplicate-library scenario.
 
+### DaVinci Resolve on Linux — crashes in Resolve's `vfork` render worker (found 2026-07-15)
+
+Applying the DepthAnything3 node in **DaVinci Resolve 21 on Rocky Linux 8** crashes Resolve
+with **SIGSEGV in ORT session creation** (`da3::DepthEngine::DepthEngine` → `Ort::Session`,
+parsing the 1.3 GB model). Root cause is **not** a library clash — it was mis-diagnosed as a
+CUDA/cuDNN version clash at first, but ruled out systematically:
+
+- Forcing **CPU** (`DA3_FORCE_CPU=1`, a new `OrtAccel.h` override) crashes **identically** —
+  so it is provider-independent, not the CUDA EP.
+- **NOT** cuDNN (`LD_PRELOAD` of system cuDNN 9.24 didn't help), **NOT** libstdc++ (Resolve
+  doesn't bundle it; system `GLIBCXX_3.4.25` ≥ needed `3.4.21`), **NOT** protobuf/abseil
+  (0 exported from ORT), **NOT** stack size (`ulimit -s 131072` didn't help).
+- **Actual cause (confirmed via gdb):** Resolve renders OFX in a **`vfork()`'d worker
+  subprocess** (gdb: *"Can not resume the parent process over vfork"*, inferior image =
+  `resolve`). ORT's session-create does large heap allocations + thread/global init that are
+  **unsafe in a post-`vfork` child** (inherited allocator-lock / thread state). Lightweight
+  OFX plugins tolerate it; a heavyweight ML runtime does not → deterministic segfault.
+
+**Proof it is environmental, not our code:** the same ORT build + same DA3 model run fine in
+`ort_check` (clean standalone process) **and in Nuke** on the same box (Nuke renders in
+in-process threads, never `fork`s). So there is **no in-process workaround** — CPU mode,
+`ulimit`, and library preloading were all tried and fail.
+
+**Fix — out-of-process inference helper.** The `.ofx` spawns a small helper *executable*
+(`fork`+**`exec`** → a fresh clean process with none of the `vfork`-inherited state) that runs
+ORT inference and returns frames via shared memory / pipe. High confidence it works because
+`ort_check`/Nuke already prove ORT+model run in a clean process here; it also future-proofs the
+same class of host-integration risk (Nuke-on-Linux CUDA coexistence, etc.). This is a dedicated
+design effort (helper exe + IPC + refactor across DepthEngine/MoGeEngine/AnyCalibEngine), not a
+patch. Everything else is validated: macOS Nuke+Resolve (CoreML), Windows Resolve (CUDA),
+Linux Nuke (CUDA); Resolve-on-**Linux** is the one host that needs this.
+
+gdb recipe for next time: `set detach-on-fork off` + `set schedule-multiple on` +
+`handle SIGSEGV stop nopass` + `run` (do **not** `catch exec` — Resolve execs `gsettings`
+et al. at startup and stops too early).
+
+### Autodesk Flame on Linux — host to validate (requested 2026-07-15)
+
+Flame supports OFX, so it's a wanted target on the Linux host matrix. Key unknown up front:
+**does Flame render OFX in-process (like Nuke → should just work) or in a `fork`/`vfork`'d
+worker (like Resolve → would need the out-of-process helper above)?** Determine that first
+(gdb / process tree while a render fires), since it dictates whether the plugin runs as-is or
+needs the helper. Also check Flame's own bundled runtime/CUDA for any coexistence issues (same
+analysis as `HOST_COMPATIBILITY.md`). Test on the same Rocky 8 + RTX 3090 box.
+
 ## AnyCalib distortion accuracy
 
 The dynamic-resolution ONNX export uses a monkeypatched DINOv2 positional-embedding
