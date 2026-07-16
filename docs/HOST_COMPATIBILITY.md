@@ -35,6 +35,18 @@ windows-latest]`, each producing a *model-less* bundle + a native installer:
 | Linux x64 | `.tar.xz` (+ optional `.deb`/`.rpm`) | installs to `/usr/OFX/Plugins` |
 | Windows x64 | `.zip` + Inno Setup/NSIS `.exe` | installs to `%CommonProgramFiles%\OFX\Plugins` |
 
+> **OFX plug-in search paths.** These install locations are the ones defined by the
+> [OpenFX packaging spec](https://openfx.readthedocs.io/en/master/Reference/ofxPackaging.html)
+> (see also the `OFX_PLUGIN_PATH` note in [`ofxCore.h`](https://github.com/AcademySoftwareFoundation/openfx/blob/main/include/ofxCore.h)).
+> A compliant host searches, in order: the `OFX_PLUGIN_PATH` env var (colon-separated on
+> Unix, semicolon on Windows), then the OS default — **Linux** `/usr/OFX/Plugins`, **macOS**
+> `/Library/OFX/Plugins`, **Windows** `%CommonProgramFiles%\OFX\Plugins` (many hosts also
+> add the per-user `~/OFX/Plugins` / `~/Library/OFX/Plugins` by convention). So dropping the
+> `DepthAnything3.ofx.bundle` in the platform path above — or pointing `OFX_PLUGIN_PATH` at
+> it — is all any host needs to find it. Verified for **Flame 2027** on Linux: its `flame`
+> binary references both `/usr/OFX/Plugins` and `OFX_PLUGIN_PATH`, so a bundle in the former
+> is discovered with no extra config.
+
 **B. Decouple models from the plugin (fixes the 2 GB limit — task #12). _Implemented._**
 The `.onnx` files are platform-independent and each is < 2 GB, so they ship as **separate
 release assets** under a dedicated, independently-versioned tag (`models-v1`) — never inside

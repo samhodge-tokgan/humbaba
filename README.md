@@ -9,8 +9,9 @@ run through **ONNX Runtime** — the **CoreML execution provider** on Apple Sili
 - **Output:** a same-size **float32 grayscale depth (Z) map in decimeters**.
 - **Acceleration:** ONNX Runtime — CoreML EP (Apple Neural Engine / GPU / CPU) on macOS,
   CUDA EP on Linux x86-64 and Windows x64; CPU fallback everywhere.
-- **Host tested:** [Natron](https://www.natrongithub.com/) on an Apple M1 (CoreML), on
-  Rocky Linux 8 with RTX 3090s (CUDA), and on Windows 11 with RTX 3090s (CUDA).
+- **Hosts validated:** [Natron](https://www.natrongithub.com/), **NukeX 16.1**, **DaVinci
+  Resolve 21** and **Autodesk Flame 2027** — across macOS (CoreML) and Windows 11 / Rocky
+  Linux 8.10 (CUDA). See the [validated-hosts matrix](#validated-hosts) with screenshots.
 
 > Status: **working end-to-end** on **Apple Silicon** (ACEScg → CoreML depth → decimeter Z),
 > **Linux x86-64 / NVIDIA CUDA**, and **Windows x64 / NVIDIA CUDA** — all verified in headless
@@ -18,6 +19,35 @@ run through **ONNX Runtime** — the **CoreML execution provider** on Apple Sili
 > [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md), platform build/deploy notes in
 > [`docs/LINUX.md`](docs/LINUX.md) and [`docs/WINDOWS.md`](docs/WINDOWS.md), packaging in
 > [`packaging/README.md`](packaging/README.md), and the milestone roadmap below.
+
+## Validated hosts
+
+Verified running end-to-end in these OFX hosts, on the platform accelerator. A ✅ 📷 cell
+links to a screenshot of the plugin producing depth in that host.
+
+| Host | macOS 26 · Apple Silicon (CoreML) | Windows 11 · RTX 3090 (CUDA) | Rocky Linux 8.10 · NVIDIA 580 (CUDA) |
+|------|:---:|:---:|:---:|
+| **Natron 2.6** | ✅ | ✅ | ✅ |
+| **NukeX 16.1** | ✅ | [✅ 📷](docs/screenshots/nuke16.1_windows11.png) | [✅ 📷](docs/screenshots/nuke16.1_rocky810.png) |
+| **DaVinci Resolve 21** | [✅ 📷](docs/screenshots/resolve21_macos.png) | ✅ | — |
+| **Flame 2027** | [✅ 📷](docs/screenshots/flame2027_macos.png) | n/a&nbsp;¹ | [✅ 📷](docs/screenshots/flame2027_rocky810_nvidia580.png) |
+
+¹ Autodesk Flame ships for macOS and Linux only — there is no Windows edition.
+
+Natron runs are headless (`NatronRenderer`) and CI-checked for numerical depth parity across
+accelerators; the production hosts were validated interactively. On Linux, the Flame 2027 run
+was additionally confirmed to execute the plugin **in-process** — the ONNX Runtime / CUDA
+session lives inside the host process (`nvidia-smi` attributes the VRAM to `flame` itself),
+with no forked worker. See [`docs/HOST_COMPATIBILITY.md`](docs/HOST_COMPATIBILITY.md).
+
+<p align="center">
+  <a href="docs/screenshots/flame2027_rocky810_nvidia580.png"><img src="docs/screenshots/flame2027_rocky810_nvidia580.png" width="240" alt="DepthAnything3 in Flame 2027 on Rocky Linux 8.10 (NVIDIA 580, CUDA)"></a>
+  <a href="docs/screenshots/flame2027_macos.png"><img src="docs/screenshots/flame2027_macos.png" width="240" alt="DepthAnything3 in Flame 2027 on macOS (CoreML)"></a>
+  <a href="docs/screenshots/nuke16.1_windows11.png"><img src="docs/screenshots/nuke16.1_windows11.png" width="240" alt="DepthAnything3 in NukeX 16.1 on Windows 11 (CUDA)"></a>
+  <br>
+  <a href="docs/screenshots/nuke16.1_rocky810.png"><img src="docs/screenshots/nuke16.1_rocky810.png" width="240" alt="DepthAnything3 in Nuke 16.1 on Rocky Linux 8 (CUDA)"></a>
+  <a href="docs/screenshots/resolve21_macos.png"><img src="docs/screenshots/resolve21_macos.png" width="240" alt="DepthAnything3 in DaVinci Resolve 21 on macOS (CoreML)"></a>
+</p>
 
 ## Plugins in this bundle
 
