@@ -138,14 +138,31 @@ gdb recipe for next time: `set detach-on-fork off` + `set schedule-multiple on` 
 `handle SIGSEGV stop nopass` + `run` (do **not** `catch exec` — Resolve execs `gsettings`
 et al. at startup and stops too early).
 
-### Autodesk Flame on Linux — host to validate (requested 2026-07-15)
+### Autodesk Flame — host to validate (macOS arm64 + Linux CUDA) (requested 2026-07-15)
 
-Flame supports OFX, so it's a wanted target on the Linux host matrix. Key unknown up front:
-**does Flame render OFX in-process (like Nuke → should just work) or in a `fork`/`vfork`'d
-worker (like Resolve → would need the out-of-process helper above)?** Determine that first
-(gdb / process tree while a render fires), since it dictates whether the plugin runs as-is or
-needs the helper. Also check Flame's own bundled runtime/CUDA for any coexistence issues (same
-analysis as `HOST_COMPATIBILITY.md`). Test on the same Rocky 8 + RTX 3090 box.
+Flame supports OFX, so it's a wanted target on both host matrices. The Flame install itself is
+vendor/licensed software and is **not tracked in this repo** — this is only a note on the
+testing possibility.
+
+Key unknown common to both platforms: **does Flame render OFX in-process (like Nuke → should
+just work) or in a `fork`/`vfork`'d worker (like Resolve → would need the out-of-process helper
+above)?** Determine that first (gdb / process tree while a render fires), since it dictates
+whether the plugin runs as-is or needs the helper. Also check Flame's own bundled runtime/CUDA
+for coexistence issues (same analysis as `HOST_COMPATIBILITY.md`).
+
+- **macOS arm64 (CoreML):** Flame 2024+ is Apple-Silicon-native, so an arm64 Flame should load
+  the arm64-only `.ofx` (CoreML EP) directly — no rebuild. (Flame 2023 was x86_64 and could not
+  load the arm64 plugin; it has been uninstalled.) Just drop the bundle in `/Library/OFX/Plugins`
+  and watch Flame's render path.
+- **Linux CUDA:** feasible on the vengabus QEMU/libvirt host via IOMMU GPU passthrough. Passthrough
+  gives the guest the real GPU, so GL+CUDA interop is native — this avoids the VirtualGL interop
+  failure that broke Resolve's viewer. Rocky 8.10 is certified for Flame 2027, so a fresh Rocky
+  8.10 VM (leave the working rocky8 alone) can host it; reuse the native-Xorg + x11vnc/VNC display
+  pattern from Resolve. Caveats: RTX 3090 is consumer GeForce (not on Autodesk's certified list —
+  runs in practice, DKU may warn); pin the kernel to the DKU + install Autodesk's certified NVIDIA
+  driver; prefer subscription sign-in (node-locked/ULF licensing is MAC-sensitive); the VM shares
+  the single passed-through 3090 with rocky8/windows-11. The v0.9.0 Linux `.ofx` (glibc-2.27 floor)
+  is already proven in Nuke on this box, so if Flame loads it in-process it likely just works.
 
 ## AnyCalib distortion accuracy
 
