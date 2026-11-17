@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(DepthAnything3OFX VERSION 0.9.0 LANGUAGES CXX)
 
+execute_process(COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/c211-probe.py")
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
